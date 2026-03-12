@@ -33,3 +33,14 @@ code, pre, .font-mono { font-family: 'JetBrains Mono', monospace; }
     linear-gradient(90deg, rgba(239,68,68,0.04) 1px, transparent 1px);
   background-size: 44px 44px;
 }
+
+#root {
+  max-width: 1400px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+img, video {
+  max-width: 100%;
+}
+
