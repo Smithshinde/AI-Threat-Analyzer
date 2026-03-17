@@ -1,17 +1,546 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="AI-powered threat analysis — MITRE ATT&CK mapping, IOC extraction, risk scoring" />
-    <title>AI Threat Analyzer</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡</text></svg>" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orpin AI Threat Analyzer — UI Mockup</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--pri:#2D5CFF;--pri-dark:#1E3FAF;--bg:#F5F7FA;--card:#FFFFFF;--text:#212529;--text2:#6B7280;--green:#43A047;--orange:#FB8C00;--red:#E53935;--footer:#212529;--hero-from:#E0E7FF;--hero-to:#F5F7FA;--sidebar-bg:#F8FAFC;--border:#E5E7EB;--shadow:0 4px 12px rgba(0,0,0,0.05)}
+.dark{--bg:#1F2937;--card:#2D3748;--text:#E5E7EB;--text2:#9CA3AF;--hero-from:#1a2332;--hero-to:#1F2937;--sidebar-bg:#1a2332;--border:#374151;--footer:#111827;--shadow:0 4px 12px rgba(0,0,0,0.3)}
+body,html{font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:16px;line-height:1.5;color:var(--text);background:var(--bg)}
+.app{min-height:100vh;background:var(--bg);overflow-x:hidden}
+.view-nav{display:flex;align-items:center;justify-content:space-between;padding:10px 24px;background:var(--card);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
+.view-tabs{display:flex;gap:4px}
+.view-tab{padding:8px 20px;border-radius:8px;border:none;background:transparent;color:var(--text2);font-size:14px;font-weight:500;cursor:pointer;transition:all .2s;font-family:inherit}
+.view-tab.active{background:var(--pri);color:#fff}
+.view-tab:hover:not(.active){background:var(--border)}
+.toggle-row{display:flex;gap:10px;align-items:center}
+.dm-toggle{width:40px;height:22px;border-radius:11px;border:1px solid var(--border);background:var(--border);cursor:pointer;position:relative;transition:all .2s}
+.dm-toggle.on{background:var(--pri);border-color:var(--pri)}
+.dm-toggle::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .2s}
+.dm-toggle.on::after{transform:translateX(18px)}
+.dm-label{font-size:13px;color:var(--text2);font-weight:500}
+
+/* ===== HERO ===== */
+.hero{background:linear-gradient(135deg,var(--hero-from),var(--hero-to));padding:80px 64px;min-height:70vh;display:flex;align-items:center;gap:64px;max-width:1440px;margin:0 auto}
+.hero-left{flex:1;max-width:580px}
+.hero-left h1{font-size:48px;font-weight:700;line-height:1.12;color:var(--text);margin-bottom:20px;letter-spacing:-0.5px}
+.hero-left h1 span{color:var(--pri)}
+.hero-left p{font-size:20px;color:var(--text2);margin-bottom:36px;max-width:500px;line-height:1.6}
+.hero-btns{display:flex;gap:20px;align-items:center}
+.btn-primary{background:var(--pri);color:#fff;border:none;padding:16px 36px;border-radius:12px;font-size:16px;font-weight:600;cursor:pointer;transition:all .2s;box-shadow:0 4px 20px rgba(45,92,255,0.3);font-family:inherit}
+.btn-primary:hover{background:var(--pri-dark);transform:translateY(-2px);box-shadow:0 8px 28px rgba(45,92,255,0.4)}
+.btn-link{color:var(--pri);font-size:16px;font-weight:500;cursor:pointer;text-decoration:none;border:none;background:none;transition:all .15s;font-family:inherit}
+.btn-link:hover{text-decoration:underline}
+.hero-right{flex:1;display:flex;justify-content:center}
+.dash-preview{background:var(--card);border-radius:20px;padding:28px;box-shadow:0 24px 80px rgba(0,0,0,0.1);width:100%;max-width:500px;border:1px solid var(--border)}
+.mini-row{display:flex;gap:16px;margin-bottom:20px}
+.mini-score{width:88px;height:88px;border-radius:50%;border:6px solid var(--red);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700;color:var(--red);flex-shrink:0}
+.mini-stats{flex:1;display:flex;flex-direction:column;gap:8px;justify-content:center}
+.mini-stat{height:8px;border-radius:4px;background:var(--border)}
+.mini-stat:nth-child(1){width:90%;background:linear-gradient(90deg,var(--green),var(--orange),var(--red))}
+.mini-stat:nth-child(2){width:70%}
+.mini-chart{height:110px;position:relative;border-radius:10px;overflow:hidden}
+
+/* ===== FEATURES ===== */
+.features{padding:80px 64px;background:var(--bg)}
+.section-title{font-size:32px;font-weight:700;text-align:center;margin-bottom:12px;color:var(--text)}
+.section-sub{font-size:18px;color:var(--text2);text-align:center;margin-bottom:48px}
+.feat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;max-width:1200px;margin:0 auto}
+.feat-card{background:var(--card);border-radius:16px;padding:32px 28px;border:1px solid var(--border);transition:all .25s;cursor:default}
+.feat-card:hover{transform:translateY(-6px);box-shadow:0 16px 40px rgba(0,0,0,0.08)}
+.feat-icon{width:52px;height:52px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:24px;margin-bottom:20px}
+.feat-card h3{font-size:18px;font-weight:600;margin-bottom:10px;color:var(--text)}
+.feat-card p{font-size:15px;color:var(--text2);line-height:1.65}
+
+/* ===== STEPS ===== */
+.steps{padding:80px 64px;background:var(--card)}
+.steps-row{display:flex;align-items:flex-start;justify-content:center;gap:0;max-width:900px;margin:0 auto;position:relative}
+.step{text-align:center;flex:1;position:relative;z-index:1}
+.step-num{width:56px;height:56px;border-radius:50%;background:var(--pri);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;margin:0 auto 20px}
+.step h4{font-size:18px;font-weight:600;margin-bottom:8px;color:var(--text)}
+.step p{font-size:14px;color:var(--text2);max-width:200px;margin:0 auto;line-height:1.6}
+.step-line{position:absolute;top:28px;left:calc(50% + 34px);right:calc(-50% + 34px);height:2px;background:var(--border);z-index:0}
+
+/* ===== TRUST ===== */
+.trust{padding:80px 64px;background:var(--bg);text-align:center}
+.logos{display:flex;justify-content:center;gap:48px;margin-bottom:48px;flex-wrap:wrap}
+.logo-placeholder{width:110px;height:40px;border-radius:8px;background:var(--border);opacity:.45;transition:all .3s;cursor:pointer}
+.logo-placeholder:hover{opacity:1;background:var(--pri);transform:scale(1.08)}
+.testimonial{max-width:580px;margin:0 auto;background:var(--card);border-radius:16px;padding:32px;border:1px solid var(--border);text-align:left;box-shadow:var(--shadow)}
+.testimonial-quote{font-size:16px;color:var(--text);line-height:1.7;margin-bottom:20px;font-style:italic}
+.testimonial-author{display:flex;align-items:center;gap:14px}
+.avatar{width:44px;height:44px;border-radius:50%;background:var(--pri);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:15px;flex-shrink:0}
+.author-info span{display:block;font-size:15px;font-weight:600;color:var(--text)}
+.author-info small{font-size:13px;color:var(--text2)}
+
+/* ===== FOOTER ===== */
+.footer{background:var(--footer);color:#fff;padding:56px 64px;display:grid;grid-template-columns:repeat(4,1fr);gap:40px}
+.footer h4{font-size:14px;font-weight:600;margin-bottom:20px;opacity:.7;text-transform:uppercase;letter-spacing:.5px}
+.footer a{display:block;color:#9CA3AF;font-size:14px;text-decoration:none;margin-bottom:10px;transition:color .15s}
+.footer a:hover{color:var(--pri)}
+
+/* ===== DASHBOARD ===== */
+.dash{display:flex;min-height:calc(100vh - 50px);background:var(--bg)}
+.sidebar{width:230px;background:var(--sidebar-bg);border-right:1px solid var(--border);padding:20px 0;flex-shrink:0;transition:width .3s}
+.sidebar.collapsed{width:60px}
+.sidebar.collapsed .nav-label{display:none}
+.sidebar.collapsed .nav-item{justify-content:center;padding:12px}
+.collapse-btn{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;border:none;background:transparent;color:var(--text2);cursor:pointer;margin:0 12px 20px;font-size:18px;transition:all .2s;font-family:inherit}
+.collapse-btn:hover{background:var(--border)}
+.nav-item{display:flex;align-items:center;gap:14px;padding:12px 24px;color:var(--text2);font-size:14px;cursor:pointer;transition:all .15s;border-left:3px solid transparent;text-decoration:none}
+.nav-item:hover{background:rgba(45,92,255,0.05);color:var(--text)}
+.nav-item.active{border-left-color:var(--pri);color:var(--pri);background:rgba(45,92,255,0.08);font-weight:500}
+.nav-icon{font-size:18px;width:22px;text-align:center}
+.dash-main{flex:1;overflow:auto}
+.dash-header{display:flex;align-items:center;justify-content:space-between;padding:16px 32px;background:var(--card);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
+.dash-logo{display:flex;align-items:center;gap:12px;font-size:17px;font-weight:700;color:var(--text)}
+.dash-logo-icon{width:32px;height:32px;border-radius:8px;background:var(--pri);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700}
+.dash-actions{display:flex;gap:10px;align-items:center}
+.btn-outline{border:1.5px solid var(--pri);color:var(--pri);background:transparent;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;font-family:inherit}
+.btn-outline:hover{background:rgba(45,92,255,0.08)}
+.btn-text{color:var(--pri);background:none;border:none;font-size:13px;font-weight:500;cursor:pointer;padding:8px 14px;font-family:inherit}
+.user-avatar{width:34px;height:34px;border-radius:50%;background:var(--pri);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600}
+.dash-content{padding:28px 32px;max-width:1200px}
+.top-row{display:flex;gap:28px;margin-bottom:28px;align-items:center}
+.score-widget{width:150px;height:150px;border-radius:50%;position:relative;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.score-ring{position:absolute;inset:0}
+.score-value{font-size:40px;font-weight:700;color:var(--red)}
+.score-label{font-size:12px;color:var(--text2);text-align:center}
+.score-info{display:flex;flex-direction:column;gap:14px}
+.risk-badge{display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border-radius:20px;font-size:13px;font-weight:600;width:fit-content}
+.risk-high{background:rgba(229,57,53,0.12);color:var(--red)}
+.action-btns{display:flex;gap:10px}
+.chart-card{background:var(--card);border-radius:14px;border:1px solid var(--border);padding:24px;margin-bottom:24px;position:relative;box-shadow:var(--shadow)}
+.chart-title{font-size:16px;font-weight:600;color:var(--text);margin-bottom:4px}
+.chart-subtitle{font-size:13px;color:var(--text2);margin-bottom:20px}
+.chart-export{position:absolute;top:20px;right:20px;width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--card);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;color:var(--text2);transition:all .15s}
+.chart-export:hover{background:var(--bg);border-color:var(--pri);color:var(--pri)}
+.bottom-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px}
+.scan-table{width:100%;font-size:13px;border-collapse:collapse}
+.scan-table th{text-align:left;padding:10px 14px;font-weight:600;color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:.6px;border-bottom:2px solid var(--border);cursor:pointer}
+.scan-table th:hover{color:var(--pri)}
+.scan-table td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text)}
+.scan-table tr:nth-child(even) td{background:rgba(0,0,0,0.02)}
+.dark .scan-table tr:nth-child(even) td{background:rgba(255,255,255,0.02)}
+.score-pill{padding:3px 12px;border-radius:12px;font-size:12px;font-weight:600;display:inline-block}
+.s-high{background:rgba(229,57,53,0.12);color:var(--red)}
+.s-med{background:rgba(251,140,0,0.12);color:var(--orange)}
+.s-low{background:rgba(67,160,71,0.12);color:var(--green)}
+.powered{position:fixed;bottom:16px;right:20px;font-size:12px;color:var(--text2);opacity:.6;display:flex;align-items:center;gap:5px;font-weight:500}
+.powered svg{width:14px;height:14px}
+
+/* ===== RESPONSIVE ===== */
+@media(max-width:1024px){
+.feat-grid{grid-template-columns:repeat(2,1fr)}
+.bottom-grid{grid-template-columns:1fr 1fr}
+}
+@media(max-width:768px){
+.hero{flex-direction:column;padding:48px 24px;min-height:auto;gap:40px}
+.hero-left h1{font-size:32px}
+.hero-left p{font-size:16px}
+.features,.steps,.trust{padding:56px 24px}
+.feat-grid{grid-template-columns:1fr}
+.bottom-grid{grid-template-columns:1fr}
+.footer{grid-template-columns:1fr 1fr;padding:40px 24px}
+.sidebar{display:none}
+.dash-content{padding:20px 16px}
+.dash-header{padding:12px 16px}
+.top-row{flex-direction:column;align-items:flex-start}
+.steps-row{flex-direction:column;gap:32px}
+.step-line{display:none}
+}
+</style>
+
+<div id="app" class="app">
+  <!-- ===== VIEW NAVIGATION ===== -->
+  <div class="view-nav">
+    <div class="view-tabs">
+      <button class="view-tab active" onclick="switchView('landing',this)">Landing page</button>
+      <button class="view-tab" onclick="switchView('dashboard',this)">Dashboard</button>
+    </div>
+    <div class="toggle-row">
+      <span class="dm-label">Dark mode</span>
+      <div class="dm-toggle" id="dmToggle" onclick="toggleDark()"></div>
+    </div>
+  </div>
+
+  <!-- ===== LANDING PAGE ===== -->
+  <div id="landing-view">
+    <!-- HERO -->
+    <div class="hero">
+      <div class="hero-left">
+        <h1>Detect &amp; visualize <span>AI-generated threats</span> in real-time</h1>
+        <p>Instant risk scores, actionable insights, and share-ready reports for security teams.</p>
+        <div class="hero-btns">
+          <button class="btn-primary" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">Start free scan</button>
+          <a class="btn-link" href="#">Watch demo &#8594;</a>
+        </div>
+      </div>
+      <div class="hero-right">
+        <div class="dash-preview">
+          <div class="mini-row">
+            <div class="mini-score">87</div>
+            <div class="mini-stats">
+              <div class="mini-stat"></div>
+              <div class="mini-stat"></div>
+              <div class="mini-stat" style="width:50%"></div>
+            </div>
+          </div>
+          <div class="mini-chart"><canvas id="miniLine"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FEATURES -->
+    <div class="features">
+      <div class="section-title">Everything you need for threat intelligence</div>
+      <p class="section-sub">Powerful tools to detect, analyze, and report AI-generated threats.</p>
+      <div class="feat-grid">
+        <div class="feat-card" onmouseover="this.style.transform='translateY(-6px)';this.style.boxShadow='0 16px 40px rgba(0,0,0,0.08)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
+          <div class="feat-icon" style="background:rgba(45,92,255,0.1);color:var(--pri)">&#9889;</div>
+          <h3>Instant scanning</h3>
+          <p>Upload any file or paste text and get results in under 3 seconds with our optimized pipeline.</p>
+        </div>
+        <div class="feat-card" onmouseover="this.style.transform='translateY(-6px)';this.style.boxShadow='0 16px 40px rgba(0,0,0,0.08)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
+          <div class="feat-icon" style="background:rgba(67,160,71,0.1);color:var(--green)">&#9671;</div>
+          <h3>Interactive charts</h3>
+          <p>Explore risk data through radar, timeline, and distribution charts with real-time tooltips.</p>
+        </div>
+        <div class="feat-card" onmouseover="this.style.transform='translateY(-6px)';this.style.boxShadow='0 16px 40px rgba(0,0,0,0.08)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
+          <div class="feat-icon" style="background:rgba(251,140,0,0.1);color:var(--orange)">&#9744;</div>
+          <h3>Exportable reports</h3>
+          <p>Generate branded PDF reports with one click. Share via link or download for offline review.</p>
+        </div>
+        <div class="feat-card" onmouseover="this.style.transform='translateY(-6px)';this.style.boxShadow='0 16px 40px rgba(0,0,0,0.08)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
+          <div class="feat-icon" style="background:rgba(229,57,53,0.1);color:var(--red)">&#123;&#125;</div>
+          <h3>API access</h3>
+          <p>Integrate threat analysis directly into your SIEM or CI/CD pipeline with our REST API.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- HOW IT WORKS -->
+    <div class="steps">
+      <div class="section-title">How it works</div>
+      <p class="section-sub">Three simple steps to actionable threat intelligence.</p>
+      <div class="steps-row">
+        <div class="step">
+          <div class="step-num">1</div>
+          <h4>Upload</h4>
+          <p>Drag-and-drop a file or paste text into the scanner.</p>
+        </div>
+        <div class="step" style="position:relative">
+          <div class="step-line" style="left:-50%;right:50%;top:28px"></div>
+          <div class="step-num">2</div>
+          <h4>Analyze</h4>
+          <p>Our AI models evaluate content and generate a risk score.</p>
+          <div class="step-line" style="left:50%;right:-50%;top:28px"></div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <h4>Act</h4>
+          <p>Download PDF, view charts, or share results with your team.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- TRUST -->
+    <div class="trust">
+      <div class="section-title">Trusted by security teams worldwide</div>
+      <p class="section-sub">Join 2,000+ organizations using Orpin AI Analyzer.</p>
+      <div class="logos">
+        <div class="logo-placeholder"></div>
+        <div class="logo-placeholder"></div>
+        <div class="logo-placeholder"></div>
+        <div class="logo-placeholder"></div>
+        <div class="logo-placeholder"></div>
+        <div class="logo-placeholder"></div>
+      </div>
+      <div class="testimonial">
+        <div class="testimonial-quote">"Orpin AI Analyzer cut our threat triage time by 60%. The real-time risk scoring and exportable reports made it indispensable for our SOC team."</div>
+        <div class="testimonial-author">
+          <div class="avatar">JC</div>
+          <div class="author-info">
+            <span>Jamie Chen</span>
+            <small>CISO, Nextera Security Corp</small>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FOOTER -->
+    <div class="footer">
+      <div>
+        <h4>Quick links</h4>
+        <a href="#">Product</a><a href="#">Pricing</a><a href="#">Documentation</a><a href="#">Changelog</a>
+      </div>
+      <div>
+        <h4>Legal</h4>
+        <a href="#">Privacy policy</a><a href="#">Terms of service</a><a href="#">Security</a><a href="#">GDPR</a>
+      </div>
+      <div>
+        <h4>Contact</h4>
+        <a href="#">support@orpin.ai</a><a href="#">Sales inquiry</a><a href="#">Press kit</a>
+      </div>
+      <div>
+        <h4>Social</h4>
+        <a href="#">Twitter / X</a><a href="#">LinkedIn</a><a href="#">GitHub</a><a href="#">Discord</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== DASHBOARD PAGE ===== -->
+  <div id="dashboard-view" style="display:none">
+    <div class="dash">
+      <!-- Sidebar -->
+      <div class="sidebar" id="sidebar">
+        <button class="collapse-btn" onclick="toggleSidebar()">&#9776;</button>
+        <a class="nav-item active"><span class="nav-icon">&#9673;</span><span class="nav-label">Overview</span></a>
+        <a class="nav-item"><span class="nav-icon">&#9906;</span><span class="nav-label">Scans</span></a>
+        <a class="nav-item"><span class="nav-icon">&#9744;</span><span class="nav-label">Reports</span></a>
+        <a class="nav-item"><span class="nav-icon">&#9881;</span><span class="nav-label">Settings</span></a>
+        <a class="nav-item"><span class="nav-icon">&#123;&#125;</span><span class="nav-label">API</span></a>
+      </div>
+
+      <!-- Main -->
+      <div class="dash-main">
+        <div class="dash-header">
+          <div class="dash-logo">
+            <div class="dash-logo-icon">O</div>
+            Orpin AI Analyzer
+          </div>
+          <div class="dash-actions">
+            <button class="btn-outline">Download PDF</button>
+            <button class="btn-text">Share</button>
+            <div class="user-avatar">AK</div>
+          </div>
+        </div>
+
+        <div class="dash-content">
+          <!-- Top Row: Score Widget -->
+          <div class="top-row">
+            <div class="score-widget">
+              <svg class="score-ring" viewBox="0 0 150 150">
+                <circle cx="75" cy="75" r="64" fill="none" stroke-width="11" stroke="#E5E7EB" opacity="0.3"/>
+                <circle cx="75" cy="75" r="64" fill="none" stroke-width="11" stroke="#E53935" stroke-dasharray="402" stroke-dashoffset="52" stroke-linecap="round" transform="rotate(-90 75 75)"/>
+              </svg>
+              <div>
+                <div class="score-value">87%</div>
+                <div class="score-label">Risk score</div>
+              </div>
+            </div>
+            <div class="score-info">
+              <span class="risk-badge risk-high">&#9679; High risk</span>
+              <div style="font-size:14px;color:var(--text2)">Scan completed Mar 16, 2026 at 14:32 UTC</div>
+              <div class="action-btns">
+                <button class="btn-outline" style="font-size:12px;padding:6px 14px">Download</button>
+                <button class="btn-text" style="font-size:12px">Share</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Middle Row: Risk Timeline -->
+          <div class="chart-card">
+            <div class="chart-title">Risk timeline</div>
+            <div class="chart-subtitle">Score trend over the past 30 days</div>
+            <div class="chart-export" title="Export PNG">&#128247;</div>
+            <div style="position:relative;height:240px"><canvas id="riskTimeline"></canvas></div>
+          </div>
+
+          <!-- Bottom Row: 3 Cards -->
+          <div class="bottom-grid">
+            <div class="chart-card">
+              <div class="chart-title">Token similarity radar</div>
+              <div class="chart-subtitle">Similarity % across token categories</div>
+              <div class="chart-export" title="Export PNG">&#128247;</div>
+              <div style="position:relative;height:260px"><canvas id="radarChart"></canvas></div>
+            </div>
+
+            <div class="chart-card">
+              <div class="chart-title">Risk distribution</div>
+              <div class="chart-subtitle">Breakdown by severity level</div>
+              <div class="chart-export" title="Export PNG">&#128247;</div>
+              <div style="position:relative;height:260px"><canvas id="donutChart"></canvas></div>
+              <div style="display:flex;justify-content:center;gap:18px;margin-top:12px;font-size:12px;color:var(--text2)">
+                <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:#43A047;display:inline-block"></span>Low 18%</span>
+                <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:#FB8C00;display:inline-block"></span>Medium 35%</span>
+                <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:#E53935;display:inline-block"></span>High 47%</span>
+              </div>
+            </div>
+
+            <div class="chart-card">
+              <div class="chart-title">Recent scans</div>
+              <div class="chart-subtitle">Last 5 analyzed files</div>
+              <table class="scan-table">
+                <thead>
+                  <tr><th>File &#8597;</th><th>Score &#8597;</th><th>Date &#8597;</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>report_q1.pdf</td><td><span class="score-pill s-high">92%</span></td><td>Mar 16</td></tr>
+                  <tr><td>email_draft.txt</td><td><span class="score-pill s-med">64%</span></td><td>Mar 15</td></tr>
+                  <tr><td>press_release.docx</td><td><span class="score-pill s-high">87%</span></td><td>Mar 14</td></tr>
+                  <tr><td>changelog_v3.md</td><td><span class="score-pill s-low">22%</span></td><td>Mar 13</td></tr>
+                  <tr><td>contract_final.pdf</td><td><span class="score-pill s-med">51%</span></td><td>Mar 12</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Powered by Vercel -->
+        <div class="powered">
+          Powered by Vercel
+          <svg viewBox="0 0 76 65" fill="currentColor"><path d="M37.5 0L75 65H0z"/></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+// View switching
+function switchView(view, btn) {
+  document.getElementById('landing-view').style.display = view === 'landing' ? '' : 'none';
+  document.getElementById('dashboard-view').style.display = view === 'dashboard' ? '' : 'none';
+  document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  if (view === 'dashboard' && !window._chartsInit) initCharts();
+}
+
+// Dark mode toggle
+function toggleDark() {
+  const t = document.getElementById('dmToggle');
+  t.classList.toggle('on');
+  document.querySelector('.app').classList.toggle('dark');
+  if (window._chartsInit) {
+    [window._tlChart, window._radarChart, window._donutChart].forEach(c => { if(c) c.destroy(); });
+    window._chartsInit = false;
+    if (document.getElementById('dashboard-view').style.display !== 'none') initCharts();
+  }
+}
+
+// Sidebar collapse
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('collapsed');
+}
+
+// Dashboard charts
+function initCharts() {
+  const isDark = document.querySelector('.app').classList.contains('dark');
+  const gridC = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+  const txtC = isDark ? '#9CA3AF' : '#6B7280';
+
+  // Risk Timeline
+  const dates = ['Feb 15','Feb 18','Feb 22','Feb 25','Mar 1','Mar 5','Mar 8','Mar 11','Mar 14','Mar 16'];
+  const scores = [42, 38, 55, 61, 58, 72, 68, 79, 84, 87];
+  window._tlChart = new Chart(document.getElementById('riskTimeline'), {
+    type: 'line',
+    data: {
+      labels: dates,
+      datasets: [{
+        data: scores,
+        borderColor: '#2D5CFF',
+        backgroundColor: 'rgba(45,92,255,0.08)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 4,
+        pointHoverRadius: 8,
+        pointBackgroundColor: '#2D5CFF',
+        borderWidth: 2.5
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { backgroundColor: isDark ? '#374151' : '#212529', titleFont: { size: 12 }, bodyFont: { size: 13 }, padding: 12, cornerRadius: 8, displayColors: false }
+      },
+      scales: {
+        y: { min: 0, max: 100, grid: { color: gridC }, ticks: { color: txtC, font: { size: 11 }, callback: v => v + '%' }, border: { display: false } },
+        x: { grid: { display: false }, ticks: { color: txtC, font: { size: 11 } }, border: { display: false } }
+      },
+      interaction: { intersect: false, mode: 'index' }
+    }
+  });
+
+  // Radar Chart
+  window._radarChart = new Chart(document.getElementById('radarChart'), {
+    type: 'radar',
+    data: {
+      labels: ['Perplexity', 'Burstiness', 'Entropy', 'Repetition', 'Coherence', 'Style'],
+      datasets: [{
+        data: [85, 72, 90, 45, 78, 88],
+        backgroundColor: 'rgba(45,92,255,0.15)',
+        borderColor: '#2D5CFF',
+        borderWidth: 2,
+        pointBackgroundColor: '#2D5CFF',
+        pointRadius: 4,
+        pointHoverRadius: 7
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        r: {
+          beginAtZero: true, max: 100,
+          grid: { color: gridC },
+          angleLines: { color: gridC },
+          pointLabels: { color: txtC, font: { size: 11, family: 'Inter, system-ui, sans-serif' } },
+          ticks: { display: false }
+        }
+      }
+    }
+  });
+
+  // Donut Chart
+  window._donutChart = new Chart(document.getElementById('donutChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['High', 'Medium', 'Low'],
+      datasets: [{
+        data: [47, 35, 18],
+        backgroundColor: ['#E53935', '#FB8C00', '#43A047'],
+        borderWidth: 0,
+        hoverOffset: 8
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '65%',
+      plugins: {
+        legend: { display: false },
+        tooltip: { backgroundColor: isDark ? '#374151' : '#212529', cornerRadius: 8, padding: 10 }
+      }
+    }
+  });
+
+  window._chartsInit = true;
+}
+
+// Hero mini line chart
+new Chart(document.getElementById('miniLine'), {
+  type: 'line',
+  data: {
+    labels: ['','','','','','','',''],
+    datasets: [{
+      data: [30, 35, 42, 38, 55, 61, 72, 87],
+      borderColor: '#2D5CFF',
+      backgroundColor: 'rgba(45,92,255,0.1)',
+      fill: true,
+      tension: 0.4,
+      pointRadius: 0,
+      borderWidth: 2
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { x: { display: false }, y: { display: false, min: 20, max: 100 } }
+  }
+});
+</script>
