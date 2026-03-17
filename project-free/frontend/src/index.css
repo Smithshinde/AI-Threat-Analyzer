@@ -1,87 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0; }
-}
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-@keyframes slideIn {
-  from { opacity: 0; transform: translateX(-8px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-@keyframes typewriter {
-  from { width: 0; }
-  to   { width: 100%; }
+@layer base {
+  html { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+  body { @apply bg-gray-50 text-gray-900 antialiased; }
 }
 
-.cursor-blink::after { content: '▋'; animation: blink 1s step-end infinite; }
-.animate-fadeIn  { animation: fadeIn  0.35s ease forwards; }
-.animate-slideIn { animation: slideIn 0.25s ease forwards; }
-
-::-webkit-scrollbar       { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
-
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  padding: 0;
-  font-family: 'Syne', sans-serif;
-  background: #080a0e;
-  color: #f1f5f9;
-  -webkit-font-smoothing: antialiased;
-}
-
-code, pre, .font-mono {
-  font-family: 'JetBrains Mono', monospace;
-}
-
-/* ── Print / PDF styles ──────────────────────────────────────── */
-@media print {
-  body {
-    background: white !important;
-    color: #1a1a2e !important;
-    font-size: 11pt;
-  }
-
-  .no-print { display: none !important; }
-
-  .print-only { display: block !important; }
-
-  .print-container {
-    max-width: 100% !important;
-    padding: 0 !important;
-    margin: 0 !important;
-  }
-
-  /* Print cards as white boxes with borders */
-  .bg-\[#0f1117\] {
-    background: white !important;
-    border: 1px solid #e2e8f0 !important;
-    color: #1a1a2e !important;
-  }
-
-  /* Print text colors */
-  .text-white    { color: #1a1a2e !important; }
-  .text-slate-200{ color: #334155 !important; }
-  .text-slate-400{ color: #64748b !important; }
-  .text-slate-500{ color: #94a3b8 !important; }
-
-  /* Page breaks */
-  .page-break { page-break-after: always; }
-
-  /* Force all tabs to show in print */
-  .print-show-all .tab-content { display: block !important; }
-
-  h1, h2, h3 { page-break-after: avoid; }
-  table      { page-break-inside: avoid; }
+@layer utilities {
+  .line-clamp-1 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; }
 }
